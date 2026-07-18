@@ -9,10 +9,43 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.shared.constants import DEFAULT_LOG_LEVEL
 from app.shared.types import Environment
+
+
+class WordPressSettings(BaseSettings):
+    """WordPress connection settings.
+
+    Loaded from environment variables prefixed with ``WP_``.
+    The application password should be stored as a secret.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="WP_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    base_url: str = ""
+    username: str = ""
+    app_password: SecretStr = SecretStr("")
+    timeout_connect: float = 10.0
+    timeout_read: float = 30.0
+    verify_ssl: bool = True
+
+    @property
+    def is_configured(self) -> bool:
+        """Return ``True`` when all required WordPress fields are set."""
+        return bool(
+            self.base_url
+            and self.username
+            and self.app_password.get_secret_value()
+        )
 
 
 class AppSettings(BaseSettings):
@@ -57,3 +90,13 @@ def get_settings() -> AppSettings:
     same object without re-parsing.
     """
     return AppSettings()
+
+
+@lru_cache(maxsize=1)
+def get_wp_settings() -> WordPressSettings:
+    """Return a cached singleton instance of :class:`WordPressSettings`.
+
+    The first call reads from the environment; subsequent calls return the
+    same object without re-parsing.
+    """
+    return WordPressSettings()

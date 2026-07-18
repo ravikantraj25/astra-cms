@@ -7,6 +7,7 @@ Usage::
 
     astra version
     astra doctor
+    astra wp test
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from app import __version__
+from app.presentation.cli.wp_commands import wp_app
 from app.shared.constants import APP_NAME
 
 # ── Typer App ────────────────────────────────────────────────────────────────
@@ -34,6 +36,8 @@ cli = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
+
+cli.add_typer(wp_app, name="wp")
 
 console = Console()
 
