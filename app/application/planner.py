@@ -6,7 +6,7 @@ from app.domain.article import Article
 from app.domain.plan import UpdateAction, UpdatePlan
 
 
-def build_update_plan(article: Article, analysis: dict) -> UpdatePlan:
+def build_update_plan(article: Article, analysis: dict[str, list[str]]) -> UpdatePlan:
     """Build an UpdatePlan from an Article and its AI analysis.
 
     Uses simple rule-based logic to determine whether a section should be

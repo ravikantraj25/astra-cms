@@ -1,7 +1,8 @@
-"""Tests for the ``astra wp test``, ``astra wp fetch``, and ``astra wp get`` CLI commands."""
+"""Tests for WordPress CLI commands (test, fetch, get, draft)."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -486,7 +487,7 @@ class TestWPGetCommand:
         cli_runner: CliRunner,
         mock_wp_settings: MagicMock,
         mock_post_detail: WPPostDetail,
-        tmp_path: object,
+        tmp_path: Path,
     ) -> None:
         """Should display post details and save HTML on success."""
         with (
@@ -495,16 +496,10 @@ class TestWPGetCommand:
                 return_value=mock_wp_settings,
             ),
             patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
-            patch("app.presentation.cli.wp_commands.Path") as MockPath,
+            patch("app.presentation.cli.wp_commands.OUTPUT_DIR", str(tmp_path)),
         ):
             mock_instance = MockClient.return_value
             mock_instance.get_post.return_value = mock_post_detail
-
-            # Mock the Path operations
-            mock_dir = MagicMock()
-            MockPath.return_value = mock_dir
-            mock_file = MagicMock()
-            mock_dir.__truediv__ = MagicMock(return_value=mock_file)
 
             result = cli_runner.invoke(cli, ["wp", "get", "123"])
 
@@ -517,6 +512,13 @@ class TestWPGetCommand:
             assert "6" in result.output
             assert "2026-09-20" in result.output
             mock_instance.get_post.assert_called_once_with(123)
+
+            output_file = tmp_path / "post_123.html"
+            assert output_file.exists()
+            assert (
+                output_file.read_text(encoding="utf-8")
+                == "<p>Diwali is the festival of lights.</p>"
+            )
 
     def test_get_404(
         self,
@@ -571,6 +573,7 @@ class TestWPGetCommand:
         cli_runner: CliRunner,
         mock_wp_settings: MagicMock,
         mock_post_detail: WPPostDetail,
+        tmp_path: Path,
     ) -> None:
         """Should save the raw HTML content to output/post_{id}.html."""
         with (
@@ -579,23 +582,119 @@ class TestWPGetCommand:
                 return_value=mock_wp_settings,
             ),
             patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
-            patch("app.presentation.cli.wp_commands.Path") as MockPath,
+            patch("app.presentation.cli.wp_commands.OUTPUT_DIR", str(tmp_path)),
         ):
             mock_instance = MockClient.return_value
             mock_instance.get_post.return_value = mock_post_detail
 
-            mock_output_dir = MagicMock()
-            MockPath.return_value = mock_output_dir
-            mock_file = MagicMock()
-            mock_output_dir.__truediv__ = MagicMock(return_value=mock_file)
-
             result = cli_runner.invoke(cli, ["wp", "get", "123"])
 
             assert result.exit_code == 0
-            # Verify mkdir was called
-            mock_output_dir.mkdir.assert_called_once_with(parents=True, exist_ok=True)
-            # Verify write_text was called with HTML content
-            mock_file.write_text.assert_called_once_with(
-                "<p>Diwali is the festival of lights.</p>",
-                encoding="utf-8",
+
+            output_file = tmp_path / "post_123.html"
+            assert output_file.exists()
+            assert (
+                output_file.read_text(encoding="utf-8")
+                == "<p>Diwali is the festival of lights.</p>"
             )
+
+
+# =============================================================================
+# astra wp draft
+# =============================================================================
+
+
+class TestWpDraft:
+    """Tests for the ``astra wp draft`` command."""
+
+    def test_draft_success(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """astra wp draft should update the post as a draft."""
+
+        html_file = tmp_path / "post_123_updated.html"
+        html_file.write_text("<p>Updated content</p>", encoding="utf-8")
+
+        updated_post = WPPost(
+            id=123,
+            title="Updated",
+            status="draft",
+            link="https://example.com/?p=123&preview=true",
+        )
+
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands._create_client") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.connect.return_value = None
+            mock_instance.close.return_value = None
+            mock_instance.update_post.return_value = updated_post
+
+            result = cli_runner.invoke(cli, ["wp", "draft", "123", str(html_file)])
+
+            assert result.exit_code == 0
+            assert "Connected" in result.output
+            assert "Draft Updated" in result.output
+            assert "draft" in result.output
+
+    def test_draft_auth_failure(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """astra wp draft should handle auth errors."""
+
+        html_file = tmp_path / "post_123.html"
+        html_file.write_text("<p>Test</p>", encoding="utf-8")
+
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands._create_client") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.connect.side_effect = AuthenticationError()
+            mock_instance.close.return_value = None
+
+            result = cli_runner.invoke(cli, ["wp", "draft", "123", str(html_file)])
+
+            assert result.exit_code == 1
+            assert "Authentication failed" in result.output
+
+    def test_draft_timeout(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """astra wp draft should handle timeout errors."""
+
+        html_file = tmp_path / "post_123.html"
+        html_file.write_text("<p>Test</p>", encoding="utf-8")
+
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands._create_client") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.connect.return_value = None
+            mock_instance.close.return_value = None
+            mock_instance.update_post.side_effect = TimeoutError()
+
+            result = cli_runner.invoke(cli, ["wp", "draft", "123", str(html_file)])
+
+            assert result.exit_code == 1
+            assert "timed out" in result.output

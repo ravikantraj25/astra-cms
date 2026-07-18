@@ -970,3 +970,118 @@ class TestWordPressClientGetPost:
         assert detail.categories == []
         assert detail.tags == []
         assert detail.word_count == 2
+
+
+# =============================================================================
+# update_post Tests
+# =============================================================================
+
+
+class TestUpdatePost:
+    """Tests for WordPressClient.update_post."""
+
+    def test_update_post_success(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """update_post() should send a POST with status=draft."""
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.json.return_value = {
+            "id": 123,
+            "title": {"rendered": "Updated"},
+            "content": {"rendered": "<p>New</p>"},
+            "status": "draft",
+            "link": "https://example.com/?p=123&preview=true",
+        }
+        mock_httpx_client.request.return_value = response
+
+        result = wp_client.update_post(
+            post_id=123,
+            title="Updated",
+            content="<p>New</p>",
+            status="draft",
+        )
+
+        assert result.id == 123
+        assert result.status == "draft"
+        assert result.link == "https://example.com/?p=123&preview=true"
+
+        # Verify the request was called with json body
+        call_args = mock_httpx_client.request.call_args
+        assert call_args.kwargs["json"]["status"] == "draft"
+        assert call_args.kwargs["json"]["title"] == "Updated"
+        assert call_args.kwargs["json"]["content"] == "<p>New</p>"
+
+    def test_update_post_blocks_publish(
+        self,
+        wp_client: WordPressClient,
+    ) -> None:
+        """update_post() should refuse status='publish'."""
+        with pytest.raises(ValueError, match=r"Only \"draft\" is allowed"):
+            wp_client.update_post(post_id=123, status="publish")
+
+    def test_update_post_404(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """update_post() should raise APIError for a 404 post."""
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 404
+        response.json.return_value = {"message": "Not found"}
+        response.reason_phrase = "Not Found"
+        mock_httpx_client.request.return_value = response
+
+        with pytest.raises(APIError):
+            wp_client.update_post(post_id=99999, content="<p>Test</p>")
+
+    def test_update_post_auth_failure(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """update_post() should raise AuthenticationError on 401."""
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 401
+        response.json.return_value = {"message": "Unauthorized"}
+        response.reason_phrase = "Unauthorized"
+        mock_httpx_client.request.return_value = response
+
+        with pytest.raises(AuthenticationError):
+            wp_client.update_post(post_id=123, content="<p>Test</p>")
+
+    def test_update_post_timeout(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """update_post() should raise TimeoutError on timeout."""
+        mock_httpx_client.request.side_effect = httpx.ReadTimeout("read timed out")
+
+        with pytest.raises(TimeoutError):
+            wp_client.update_post(post_id=123, content="<p>Test</p>")
+
+    def test_update_post_content_only(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """update_post() should only include content when title is None."""
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.json.return_value = {
+            "id": 123,
+            "title": {"rendered": "Original Title"},
+            "content": {"rendered": "<p>New content</p>"},
+            "status": "draft",
+        }
+        mock_httpx_client.request.return_value = response
+
+        wp_client.update_post(post_id=123, content="<p>New content</p>")
+
+        call_args = mock_httpx_client.request.call_args
+        json_body = call_args.kwargs["json"]
+        assert "title" not in json_body
+        assert json_body["content"] == "<p>New content</p>"

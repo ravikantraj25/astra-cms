@@ -4,6 +4,7 @@ Provides:
 - ``astra wp test``  — test the WordPress connection
 - ``astra wp fetch`` — fetch posts from WordPress
 - ``astra wp get``   — fetch a single post by ID
+- ``astra wp draft`` — update a post as a draft from a local HTML file
 """
 
 from __future__ import annotations
@@ -319,6 +320,79 @@ def get_post(
 
         console.print(f"  [green]✔ Saved HTML to[/green] [cyan]{output_file}[/cyan]")
         console.print()
+
+    except WordPressError as exc:
+        _handle_wp_error(exc)
+        raise typer.Exit(code=1) from exc
+
+    finally:
+        client.close()
+
+
+@wp_app.command(name="draft")
+def update_draft(
+    post_id: int = typer.Argument(help="The WordPress post ID to update."),
+    html_file: Path = typer.Argument(  # noqa: B008
+        ...,
+        help="Path to the HTML file containing the new content.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+) -> None:
+    """Update a WordPress post as a draft from a local HTML file.
+
+    This command reads the HTML file and pushes its content to
+    WordPress with status ``draft``.  It will **never** overwrite
+    a published post directly.
+
+    Examples::
+
+        astra wp draft 123 output/post_123_updated.html
+    """
+    settings = _ensure_configured()
+
+    console.print()
+    console.print(
+        f"  [dim]Updating post {post_id} as draft from[/dim] "
+        f"[cyan]{html_file}[/cyan] [dim]...[/dim]"
+    )
+
+    content = html_file.read_text(encoding=DEFAULT_ENCODING)
+    client = _create_client(settings)
+
+    try:
+        client.connect()
+        console.print("  [green]✔ Connected[/green]")
+        console.print()
+
+        updated = client.update_post(
+            post_id=post_id,
+            content=content,
+            status="draft",
+        )
+
+        table = Table(show_header=False, padding=(0, 2), box=None)
+        table.add_column("Key", style="bold cyan", min_width=16)
+        table.add_column("Value", style="white")
+
+        table.add_row("Post Updated", f"#{updated.id}")
+        table.add_row("Status", "[yellow]draft[/yellow]")
+        table.add_row("Draft URL", updated.link or "[dim]N/A[/dim]")
+
+        console.print(
+            Panel(
+                table,
+                border_style="bright_blue",
+                title=f"[bold]{APP_NAME}[/bold] — Draft Updated",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+
+    except ValueError as exc:
+        console.print(f"  [red]✘ {exc}[/red]")
+        raise typer.Exit(code=1) from exc
 
     except WordPressError as exc:
         _handle_wp_error(exc)

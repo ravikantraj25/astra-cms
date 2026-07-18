@@ -290,6 +290,54 @@ class WordPressClient:
             word_count=_word_count(post.content_html),
         )
 
+    def update_post(
+        self,
+        post_id: int,
+        title: str | None = None,
+        content: str | None = None,
+        status: str = "draft",
+    ) -> WPPost:
+        """Update a WordPress post, defaulting to draft status.
+
+        **Safety**: The ``status`` parameter defaults to ``"draft"``.
+        Passing ``"publish"`` is explicitly blocked to prevent
+        accidental overwrites of live content.
+
+        Args:
+            post_id: The WordPress post ID to update.
+            title: New title (``None`` = keep existing).
+            content: New HTML content (``None`` = keep existing).
+            status: Target status. Must be ``"draft"``.
+
+        Returns:
+            The updated :class:`WPPost`.
+
+        Raises:
+            ValueError: If ``status`` is not ``"draft"``.
+            APIError: If the post is not found (404).
+            AuthenticationError: If credentials are invalid.
+            WordPressError: On any other API or network failure.
+        """
+        if status != "draft":
+            msg = (
+                f"Refusing to update post {post_id} with status "
+                f'"{status}". Only "draft" is allowed.'
+            )
+            raise ValueError(msg)
+
+        body: dict[str, object] = {"status": status}
+        if title is not None:
+            body["title"] = title
+        if content is not None:
+            body["content"] = content
+
+        data = self._request(
+            "POST",
+            f"{_WP_V2_PATH}/posts/{post_id}",
+            json_body=body,
+        )
+        return WPPost.from_api_response(data)
+
     # ── Private helpers ──────────────────────────────────────────────────────
 
     def _ensure_connected(self) -> httpx.Client:
@@ -304,6 +352,7 @@ class WordPressClient:
         method: str,
         path: str,
         params: dict[str, str] | None = None,
+        json_body: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Execute an HTTP request and return parsed JSON dict.
 
@@ -311,11 +360,12 @@ class WordPressClient:
             method: HTTP method (GET, POST, etc.).
             path: URL path relative to base_url.
             params: Optional query parameters.
+            json_body: Optional JSON body for POST/PUT requests.
 
         Returns:
             The parsed JSON response as a dictionary.
         """
-        response = self._request_raw(method, path, params=params)
+        response = self._request_raw(method, path, params=params, json_body=json_body)
         data = self._parse_json(response)
         if not isinstance(data, dict):
             raise APIError(
@@ -329,6 +379,7 @@ class WordPressClient:
         method: str,
         path: str,
         params: dict[str, str] | None = None,
+        json_body: dict[str, object] | None = None,
     ) -> httpx.Response:
         """Execute an HTTP request and return the raw response.
 
@@ -338,6 +389,7 @@ class WordPressClient:
             method: HTTP method.
             path: URL path relative to base_url.
             params: Optional query parameters.
+            json_body: Optional JSON body for POST/PUT requests.
 
         Returns:
             The raw :class:`httpx.Response`.
@@ -352,7 +404,7 @@ class WordPressClient:
         client = self._ensure_connected()
 
         try:
-            response = client.request(method, path, params=params)
+            response = client.request(method, path, params=params, json=json_body)
         except httpx.TimeoutException as exc:
             logger.error("Request timed out: %s %s", method, path)
             raise TimeoutError(
