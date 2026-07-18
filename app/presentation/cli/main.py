@@ -536,6 +536,100 @@ def diff_articles(
     console.print()
 
 
+@cli.command(name="generate")
+def generate_html(
+    plan_path: Path = typer.Argument(  # noqa: B008
+        ...,
+        help="Path to the update_plan.json file.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+    article_path: Path = typer.Option(  # noqa: B008
+        None,
+        "--article",
+        "-a",
+        help="Path to the original HTML file. If omitted, attempts auto-discovery.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+) -> None:
+    """Generate updated HTML from an Update Plan using AI."""
+    import json
+
+    from app.application.generator import generate_updated_article
+    from app.application.section_detector import detect_sections
+    from app.domain.plan import UpdatePlan
+    from app.infrastructure.config.settings import get_groq_settings
+    from app.infrastructure.providers.groq_provider import GroqProvider
+
+    settings = get_groq_settings()
+    if not settings.is_configured:
+        console.print("  [red]✘ Groq API key is not configured.[/red]")
+        raise typer.Exit(code=1)
+
+    try:
+        plan_data = json.loads(plan_path.read_text(encoding="utf-8"))
+        plan = UpdatePlan.model_validate(plan_data)
+    except Exception as err:
+        console.print(f"  [red]✘ Invalid Plan file:[/red] {err}")
+        raise typer.Exit(code=1) from err
+
+    if not article_path:
+        html_files = list(plan_path.parent.glob("*.html"))
+        if len(html_files) == 1:
+            article_path = html_files[0]
+        elif len(html_files) > 1:
+            console.print(
+                "  [red]✘ Multiple HTML files found. Please specify --article.[/red]"
+            )
+            raise typer.Exit(code=1)
+        else:
+            console.print(
+                "  [red]✘ No HTML files found. Please specify --article.[/red]"
+            )
+            raise typer.Exit(code=1)
+
+    try:
+        article = parse_html_file(article_path)
+        article = detect_sections(article)
+    except Exception as err:
+        console.print(f"  [red]✘ Failed to parse article:[/red] {err}")
+        raise typer.Exit(code=1) from err
+
+    console.print()
+    console.print(
+        f"  [dim]Generating HTML for[/dim] [cyan]{article_path.name}[/cyan] [dim]...[/dim]"
+    )
+
+    provider = GroqProvider(settings)
+    updated_html = generate_updated_article(article, plan, provider)
+
+    output_dir = plan_path.parent
+    output_file = output_dir / f"{article_path.stem}_updated.html"
+    output_file.write_text(updated_html, encoding="utf-8")
+
+    console.print()
+    table = Table(show_header=False, padding=(0, 2), box=None)
+    table.add_column("Key", style="bold magenta", min_width=16)
+    table.add_column("Value", style="white")
+    table.add_row("Status", "[green]Success[/green]")
+    table.add_row("Original Size", f"{len(article.raw_html)} chars")
+    table.add_row("Updated Size", f"{len(updated_html)} chars")
+    table.add_row("Saved To", str(output_file))
+
+    console.print(
+        Panel(
+            table,
+            border_style="bright_blue",
+            title=f"[bold]{APP_NAME}[/bold] — HTML Generation Complete",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 

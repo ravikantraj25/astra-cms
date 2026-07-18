@@ -6,7 +6,7 @@ sections.  No AI calls are made — this module only produces the prompt string.
 
 from __future__ import annotations
 
-from app.domain.article import Article
+from app.domain.article import Article, Section
 
 
 def _detect_article_type(article: Article) -> str:
@@ -150,5 +150,53 @@ def build_analysis_prompt(article: Article) -> str:
     lines.append('  "suggestions": ["string"]')
     lines.append("}")
     lines.append("Do NOT wrap the JSON in markdown code blocks. Return ONLY valid JSON.")
+
+    return "\n".join(lines)
+
+
+def build_section_update_prompt(section: Section, reason: str) -> str:
+    """Build an AI prompt for rewriting a specific section.
+
+    Args:
+        section: The section to update.
+        reason: The reason this section needs an update.
+
+    Returns:
+        A formatted prompt string for generating updated section HTML.
+    """
+    lines: list[str] = []
+    lines.append("=" * 60)
+    lines.append("SECTION UPDATE PROMPT")
+    lines.append("=" * 60)
+    lines.append("")
+    lines.append(f"Section Name: {section.name}")
+    lines.append(f"Section Type: {section.type}")
+    lines.append(f"Update Reason: {reason}")
+    lines.append("")
+    lines.append("-" * 60)
+    lines.append("ORIGINAL HTML")
+    lines.append("-" * 60)
+    lines.append("")
+    lines.append(section.content)
+    lines.append("")
+    lines.append("-" * 60)
+    lines.append("UPDATE INSTRUCTIONS")
+    lines.append("-" * 60)
+    lines.append("")
+    lines.append("Please rewrite and improve the HTML section above based on the Update Reason.")
+    lines.append("You MUST adhere strictly to the following rules:")
+    lines.append("")
+    lines.append("1. CRITICAL: Preserve all images (<img> tags) exactly as they are.")
+    lines.append(
+        "2. CRITICAL: Preserve all tables (<table>, <tr>, <td>) structure and formatting."
+    )
+    lines.append("3. CRITICAL: Preserve all links (<a> tags) and their exact href attributes.")
+    lines.append("4. CRITICAL: Preserve all HTML schema, attributes, and classes.")
+    lines.append("5. Improve clarity, grammar, and readability of the text content only.")
+    lines.append("6. Maintain the original tone and intent of the article.")
+    lines.append("7. Do NOT add new sections or extraneous wrapper tags (no <html>, <body>, etc).")
+    lines.append("")
+    lines.append("Provide your output EXACTLY as valid HTML.")
+    lines.append("Do NOT wrap the HTML in markdown code blocks. Return ONLY the HTML content.")
 
     return "\n".join(lines)
