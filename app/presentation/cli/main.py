@@ -16,6 +16,7 @@ from __future__ import annotations
 import platform
 import shutil
 import sys
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 
@@ -27,6 +28,8 @@ from rich.table import Table
 from app import __version__
 from app.application.parser import parse_html_file
 from app.presentation.cli.ai_commands import ai_app
+from app.presentation.cli.auto_commands import auto_app
+from app.presentation.cli.workflow_commands import workflow_app
 from app.presentation.cli.wp_commands import wp_app
 from app.shared.constants import APP_NAME
 
@@ -34,7 +37,7 @@ from app.shared.constants import APP_NAME
 
 cli = typer.Typer(
     name="astra",
-    help=f"{APP_NAME} — AI-powered headless CMS toolkit.",
+    help=f"{APP_NAME} — AI-powered Editorial Operating System for WordPress.",
     add_completion=False,
     no_args_is_help=True,
     rich_markup_mode="rich",
@@ -42,6 +45,8 @@ cli = typer.Typer(
 
 cli.add_typer(wp_app, name="wp")
 cli.add_typer(ai_app, name="ai")
+cli.add_typer(workflow_app, name="workflow")
+cli.add_typer(auto_app, name="auto")
 
 console = Console()
 
@@ -298,7 +303,7 @@ def analyze_article_ai(
 
     try:
         response_text = provider.generate(prompt)
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         console.print(f"  [red]✘ AI Generation failed:[/red] {e}")
         raise typer.Exit(code=1) from e
 
@@ -572,7 +577,7 @@ def generate_html(
     try:
         plan_data = json.loads(plan_path.read_text(encoding="utf-8"))
         plan = UpdatePlan.model_validate(plan_data)
-    except Exception as err:
+    except (json.JSONDecodeError, ValueError) as err:
         console.print(f"  [red]✘ Invalid Plan file:[/red] {err}")
         raise typer.Exit(code=1) from err
 
@@ -581,20 +586,16 @@ def generate_html(
         if len(html_files) == 1:
             article_path = html_files[0]
         elif len(html_files) > 1:
-            console.print(
-                "  [red]✘ Multiple HTML files found. Please specify --article.[/red]"
-            )
+            console.print("  [red]✘ Multiple HTML files found. Please specify --article.[/red]")
             raise typer.Exit(code=1)
         else:
-            console.print(
-                "  [red]✘ No HTML files found. Please specify --article.[/red]"
-            )
+            console.print("  [red]✘ No HTML files found. Please specify --article.[/red]")
             raise typer.Exit(code=1)
 
     try:
         article = parse_html_file(article_path)
         article = detect_sections(article)
-    except Exception as err:
+    except (FileNotFoundError, ValueError, OSError) as err:
         console.print(f"  [red]✘ Failed to parse article:[/red] {err}")
         raise typer.Exit(code=1) from err
 
@@ -604,7 +605,7 @@ def generate_html(
     )
 
     provider = GroqProvider(settings)
-    updated_html = generate_updated_article(article, plan, provider)
+    updated_html, _ = generate_updated_article(article, plan, provider)
 
     output_dir = plan_path.parent
     output_file = output_dir / f"{article_path.stem}_updated.html"
@@ -643,7 +644,7 @@ def _check_package(table: Table, name: str) -> None:
     try:
         ver: str | None = pkg_version(name)
         table.add_row(f"Package: {name}", _status_icon(True), f"v{ver}")
-    except Exception:
+    except PackageNotFoundError:
         table.add_row(f"Package: {name}", _status_icon(False), "not installed")
 
 

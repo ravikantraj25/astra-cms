@@ -53,9 +53,13 @@ def test_generate_updated_article_skips_and_deletes() -> None:
 
     mock_ai = MagicMock()
 
-    result = generate_updated_article(article, plan, mock_ai)
+    result, report = generate_updated_article(article, plan, mock_ai)
 
     assert result == "<p>Sec 1</p>"
+    assert report.skipped_sections == ["Section 1"]
+    assert report.updated_sections == ["Section 2"]
+    assert report.confidence_score == 100.0
+    assert report.section_confidences == {"Section 2": 100.0}
     mock_ai.generate.assert_not_called()
 
 
@@ -95,7 +99,7 @@ def test_generate_updated_article_updates() -> None:
                 section="Section 2",
                 reason="Update 2",
                 priority="High",
-                confidence=90,
+                confidence=95,
                 action="Update",
             ),
         ]
@@ -108,7 +112,10 @@ def test_generate_updated_article_updates() -> None:
         "<p>New Sec 1</p>",
     ]
 
-    result = generate_updated_article(article, plan, mock_ai)
+    result, report = generate_updated_article(article, plan, mock_ai)
 
     assert result == "<p>New Sec 1</p><p>New Sec 2</p>"
+    assert report.updated_sections == ["Section 2", "Section 1"]
+    assert report.confidence_score == 92.5
+    assert report.section_confidences == {"Section 2": 95.0, "Section 1": 90.0}
     assert mock_ai.generate.call_count == 2

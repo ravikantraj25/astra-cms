@@ -88,10 +88,20 @@ def build_prompt(article: Article) -> str:
     lines.append("2. Improve clarity, grammar, and readability.")
     lines.append("3. Maintain the original tone and intent.")
     lines.append("4. Keep all factual information accurate.")
-    lines.append("5. Optimize headings for SEO without keyword stuffing.")
-    lines.append("6. Ensure each section has a clear purpose.")
-    lines.append("7. Do NOT add new sections unless explicitly requested.")
-    lines.append("8. Do NOT remove any existing content.")
+    lines.append(
+        "5. Detect and update any outdated information (dates, stats, deprecated details)."
+    )
+    lines.append(
+        "6. Preserve evergreen content, timeless definitions, and accurate historical facts."
+    )
+    lines.append("7. Update only sections that need changes; keep tone and formatting consistent.")
+    lines.append(
+        "8. Avoid unnecessary rewrites or stylistic churn where content is already accurate."
+    )
+    lines.append("9. Optimize headings for SEO without keyword stuffing.")
+    lines.append("10. Ensure each section has a clear purpose.")
+    lines.append("11. Do NOT add new sections unless explicitly requested.")
+    lines.append("12. Do NOT remove any existing content.")
     lines.append("")
 
     # ── Output Format ────────────────────────────────────────────────────
@@ -141,6 +151,16 @@ def build_analysis_prompt(article: Article) -> str:
     lines.append("-" * 60)
     lines.append("")
     lines.append("Please analyze the article structure and metadata above.")
+    lines.append("In your analysis, specifically identify:")
+    lines.append(
+        "1. Outdated information that needs updating (e.g., old dates, stats, deprecated tools)."
+    )
+    lines.append(
+        "2. Evergreen content and sections that are accurate and should be preserved intact."
+    )
+    lines.append(
+        "3. Sections that require targeted changes vs. sections where rewrites should be avoided."
+    )
     lines.append("Provide your output EXACTLY as a valid JSON object matching this schema:")
     lines.append("{")
     lines.append('  "seo_score": 85,')
@@ -192,9 +212,20 @@ def build_section_update_prompt(section: Section, reason: str) -> str:
     )
     lines.append("3. CRITICAL: Preserve all links (<a> tags) and their exact href attributes.")
     lines.append("4. CRITICAL: Preserve all HTML schema, attributes, and classes.")
-    lines.append("5. Improve clarity, grammar, and readability of the text content only.")
-    lines.append("6. Maintain the original tone and intent of the article.")
-    lines.append("7. Do NOT add new sections or extraneous wrapper tags (no <html>, <body>, etc).")
+    lines.append(
+        "5. Detect and update any outdated information (dates, statistics, obsolete details)."
+    )
+    lines.append("6. Preserve evergreen content and timeless definitions without modification.")
+    lines.append(
+        "7. Update only what needs changes based on the reason; avoid unnecessary rewrites."
+    )
+    lines.append("8. Maintain consistent tone, voice, and formatting across the section.")
+    lines.append(
+        "9. Improve clarity and readability of the text while keeping accurate parts unchanged."
+    )
+    lines.append(
+        "10. Do NOT add new sections or extraneous wrapper tags (no <html>, <body>, etc)."
+    )
     lines.append("")
     lines.append("Provide your output EXACTLY as valid HTML.")
     lines.append("Do NOT wrap the HTML in markdown code blocks. Return ONLY the HTML content.")

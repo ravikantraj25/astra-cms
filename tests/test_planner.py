@@ -62,3 +62,45 @@ def test_build_update_plan_with_matches() -> None:
     conclusion_action = next(a for a in plan.actions if a.section == "Conclusion")
     assert conclusion_action.action == "Skip"
     assert conclusion_action.priority == "Low"
+
+
+def test_build_update_plan_outdated_evergreen_and_confidences() -> None:
+    """Should detect outdated info, skip evergreen sections, and assign exact confidence scores."""
+    article = Article(
+        title="Outdated vs Evergreen",
+        sections=[
+            Section(
+                name="Statistics",
+                type="heading",
+                start_position=0,
+                end_position=10,
+                content="Stats",
+            ),
+            Section(
+                name="Foundations",
+                type="heading",
+                start_position=10,
+                end_position=20,
+                content="Basics",
+            ),
+        ],
+    )
+
+    analysis = {
+        "weaknesses": ["The Statistics section contains outdated numbers from past years."],
+        "strengths": ["Foundations section is evergreen and accurate."],
+        "confidence_scores": {"Statistics": 96, "Foundations": 100},
+    }
+
+    plan = build_update_plan(article, analysis)
+    assert len(plan.actions) == 2
+
+    stats_action = next(a for a in plan.actions if a.section == "Statistics")
+    assert stats_action.action == "Update"
+    assert stats_action.confidence == 96
+    assert "outdated" in stats_action.reason.lower()
+
+    foundations_action = next(a for a in plan.actions if a.section == "Foundations")
+    assert foundations_action.action == "Skip"
+    assert foundations_action.confidence == 100
+    assert "evergreen" in foundations_action.reason.lower()

@@ -56,7 +56,9 @@ def test_generate_html_success(
     plan_file.write_text(json.dumps(plan_data), encoding="utf-8")
 
     with (
-        patch("app.infrastructure.config.settings.get_groq_settings", return_value=mock_groq_settings),
+        patch(
+            "app.infrastructure.config.settings.get_groq_settings", return_value=mock_groq_settings
+        ),
         patch("app.infrastructure.providers.groq_provider.GroqProvider") as MockProvider,
         patch("app.application.section_detector.detect_sections") as mock_detect,
     ):

@@ -16,7 +16,7 @@
 
 ## Overview
 
-**Astra CMS** is an open-source toolkit designed to streamline CMS migrations, content management, and AI-powered content transformations. Built with clean architecture principles and a modular plugin system, Astra CMS gives developers full control over their content pipelines.
+**Astra CMS** is an open-source toolkit designed to streamline editorial workflows by providing an AI-powered operating system for WordPress. Built with clean architecture principles and a modular plugin system, Astra CMS gives developers and editors full control over content analysis, planning, and generation without ever compromising the structural integrity of your HTML.
 
 ### Key Design Principles
 
@@ -124,6 +124,54 @@ astra wp fetch --status draft
   123     publish     Ganesh Dallas
   124     publish     Dussehra Sydney
 ```
+
+---
+
+### AI Editorial Pipeline
+
+Run your WordPress content through the full AI-powered editorial lifecycle:
+
+```bash
+# 1. Fetch raw HTML, analyze it, and build an update plan ALL in one command!
+astra workflow analyze 123
+
+# 2. Generate updated HTML + telemetry report (output/update_report.json)
+astra workflow generate 123
+
+# 3. Preview changes visually (optional)
+astra diff output/post_123.html output/post_123_updated.html
+
+# 4. Push safely back to WordPress as a Draft for review!
+astra workflow publish 123
+```
+
+You can also run granular individual commands:
+```bash
+# Standalone generation
+astra generate output/update_plan.json --article output/post_123.html
+
+# Standalone draft upload
+astra wp draft 123 output/post_123_updated.html
+```
+
+---
+
+### Automated Batch Processing (`astra auto update`)
+
+Update multiple WordPress posts across categories or tags in a single batch, with per-post error resiliency and summary telemetry reports:
+
+```bash
+# Update up to 10 published posts (default limit)
+astra auto update
+
+# Update up to 5 posts in the 'Technology' category as a dry run (local preview without publishing drafts)
+astra auto update --category Technology --limit 5 --dry-run
+
+# Update posts tagged with 'AI' and publish them directly as drafts for manual review
+astra auto update --tag AI --all
+```
+
+**Summary Report Generated:** `output/batch_summary_report.json`
 
 ---
 

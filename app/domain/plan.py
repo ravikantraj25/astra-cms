@@ -16,6 +16,32 @@ class UpdateAction(BaseModel):
 
 
 class UpdatePlan(BaseModel):
-    """A complete plan for updating an article."""
+    """The complete content update plan."""
 
-    actions: list[UpdateAction] = Field(default_factory=list, description="List of actions.")
+    actions: list[UpdateAction] = Field(
+        default_factory=list,
+        description="List of actions to perform on the article.",
+    )
+
+
+class UpdateReport(BaseModel):
+    """Telemetry and reporting for the HTML Update Engine."""
+
+    updated_sections: list[str] = Field(
+        default_factory=list, description="Sections successfully updated."
+    )
+    skipped_sections: list[str] = Field(
+        default_factory=list, description="Sections skipped or ignored."
+    )
+    confidence_score: float = Field(
+        default=0.0, description="Average confidence of applied updates."
+    )
+    section_confidences: dict[str, float] = Field(
+        default_factory=dict, description="Confidence score for every updated section."
+    )
+    warnings: list[str] = Field(
+        default_factory=list, description="Warnings encountered during generation."
+    )
+    processing_time_seconds: float = Field(
+        default=0.0, description="Time taken to run the update engine."
+    )
