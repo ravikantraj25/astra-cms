@@ -9,9 +9,7 @@ from typing import Final
 
 APP_NAME: Final[str] = "Astra CMS"
 APP_SLUG: Final[str] = "astra-cms"
-APP_DESCRIPTION: Final[str] = (
-    "A modern, AI-powered headless CMS migration and management toolkit."
-)
+APP_DESCRIPTION: Final[str] = "AI-powered Editorial Operating System for WordPress."
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 

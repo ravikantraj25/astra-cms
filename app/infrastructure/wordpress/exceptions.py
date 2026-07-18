@@ -58,6 +58,16 @@ class TimeoutError(WordPressError):
         super().__init__(message=message, status_code=None)
 
 
+class RateLimitError(WordPressError):
+    """Raised when WordPress rate-limits the request (HTTP 429).
+
+    The caller should wait and retry after a delay.
+    """
+
+    def __init__(self, message: str = "Rate limited by WordPress. Try again later.") -> None:
+        super().__init__(message=message, status_code=429)
+
+
 class APIError(WordPressError):
     """Raised when the WordPress REST API returns an unexpected error response.
 

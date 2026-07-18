@@ -1,4 +1,4 @@
-"""Tests for the ``astra wp test`` CLI command."""
+"""Tests for the ``astra wp test`` and ``astra wp fetch`` CLI commands."""
 
 from __future__ import annotations
 
@@ -10,10 +10,17 @@ from typer.testing import CliRunner
 from app.infrastructure.wordpress.exceptions import (
     AuthenticationError,
     ConnectionError,
+    RateLimitError,
     TimeoutError,
     WordPressError,
 )
-from app.infrastructure.wordpress.models import WPHealthCheck, WPSiteInfo, WPUser
+from app.infrastructure.wordpress.models import (
+    WPHealthCheck,
+    WPPost,
+    WPPostList,
+    WPSiteInfo,
+    WPUser,
+)
 from app.presentation.cli.main import cli
 
 
@@ -21,6 +28,20 @@ from app.presentation.cli.main import cli
 def cli_runner() -> CliRunner:
     """Return a Typer CLI test runner."""
     return CliRunner()
+
+
+@pytest.fixture()
+def mock_wp_settings() -> MagicMock:
+    """Return a mock WordPressSettings that is fully configured."""
+    return MagicMock(
+        is_configured=True,
+        base_url="https://example.com",
+        username="admin",
+        app_password=MagicMock(get_secret_value=MagicMock(return_value="test-pass")),
+        timeout_connect=10.0,
+        timeout_read=30.0,
+        verify_ssl=True,
+    )
 
 
 @pytest.fixture()
@@ -45,6 +66,25 @@ def mock_health() -> WPHealthCheck:
     )
 
 
+@pytest.fixture()
+def mock_post_list() -> WPPostList:
+    """Return a mock WPPostList result."""
+    return WPPostList(
+        posts=[
+            WPPost(id=120, title="Diwali NYC 2026", status="publish", slug="diwali"),
+            WPPost(id=121, title="Chhath USA", status="publish", slug="chhath"),
+            WPPost(id=122, title="Holi Boston", status="draft", slug="holi"),
+        ],
+        total=3,
+        total_pages=1,
+        page=1,
+        per_page=10,
+    )
+
+
+# =============================================================================
+# astra wp test
+# =============================================================================
 
 
 class TestWPTestCommand:
@@ -52,9 +92,7 @@ class TestWPTestCommand:
 
     def test_wp_test_not_configured(self, cli_runner: CliRunner) -> None:
         """Should fail gracefully when WordPress is not configured."""
-        with patch(
-            "app.presentation.cli.wp_commands.get_wp_settings"
-        ) as mock_settings:
+        with patch("app.presentation.cli.wp_commands.get_wp_settings") as mock_settings:
             mock_settings.return_value = MagicMock(is_configured=False)
 
             result = cli_runner.invoke(cli, ["wp", "test"])
@@ -64,21 +102,15 @@ class TestWPTestCommand:
     def test_wp_test_success(
         self,
         cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
         mock_health: WPHealthCheck,
     ) -> None:
         """Should display site info on successful connection."""
-        mock_settings = MagicMock(
-            is_configured=True,
-            base_url="https://example.com",
-            username="admin",
-            app_password=MagicMock(get_secret_value=MagicMock(return_value="test-pass")),
-            timeout_connect=10.0,
-            timeout_read=30.0,
-            verify_ssl=True,
-        )
-
         with (
-            patch("app.presentation.cli.wp_commands.get_wp_settings", return_value=mock_settings),
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
             patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
         ):
             mock_instance = MockClient.return_value
@@ -92,20 +124,17 @@ class TestWPTestCommand:
             assert "admin" in result.output
             assert "Healthy" in result.output
 
-    def test_wp_test_auth_error(self, cli_runner: CliRunner) -> None:
+    def test_wp_test_auth_error(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+    ) -> None:
         """Should show auth error and hint on 401."""
-        mock_settings = MagicMock(
-            is_configured=True,
-            base_url="https://example.com",
-            username="admin",
-            app_password=MagicMock(get_secret_value=MagicMock(return_value="bad-pass")),
-            timeout_connect=10.0,
-            timeout_read=30.0,
-            verify_ssl=True,
-        )
-
         with (
-            patch("app.presentation.cli.wp_commands.get_wp_settings", return_value=mock_settings),
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
             patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
         ):
             mock_instance = MockClient.return_value
@@ -116,20 +145,17 @@ class TestWPTestCommand:
             assert result.exit_code == 1
             assert "Authentication failed" in result.output
 
-    def test_wp_test_connection_error(self, cli_runner: CliRunner) -> None:
+    def test_wp_test_connection_error(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+    ) -> None:
         """Should show connection error and hint on network failure."""
-        mock_settings = MagicMock(
-            is_configured=True,
-            base_url="https://example.com",
-            username="admin",
-            app_password=MagicMock(get_secret_value=MagicMock(return_value="pass")),
-            timeout_connect=10.0,
-            timeout_read=30.0,
-            verify_ssl=True,
-        )
-
         with (
-            patch("app.presentation.cli.wp_commands.get_wp_settings", return_value=mock_settings),
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
             patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
         ):
             mock_instance = MockClient.return_value
@@ -140,20 +166,17 @@ class TestWPTestCommand:
             assert result.exit_code == 1
             assert "Connection failed" in result.output
 
-    def test_wp_test_timeout_error(self, cli_runner: CliRunner) -> None:
+    def test_wp_test_timeout_error(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+    ) -> None:
         """Should show timeout error and hint."""
-        mock_settings = MagicMock(
-            is_configured=True,
-            base_url="https://example.com",
-            username="admin",
-            app_password=MagicMock(get_secret_value=MagicMock(return_value="pass")),
-            timeout_connect=10.0,
-            timeout_read=30.0,
-            verify_ssl=True,
-        )
-
         with (
-            patch("app.presentation.cli.wp_commands.get_wp_settings", return_value=mock_settings),
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
             patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
         ):
             mock_instance = MockClient.return_value
@@ -164,20 +187,17 @@ class TestWPTestCommand:
             assert result.exit_code == 1
             assert "timed out" in result.output
 
-    def test_wp_test_generic_wp_error(self, cli_runner: CliRunner) -> None:
+    def test_wp_test_generic_wp_error(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+    ) -> None:
         """Should show generic WordPress error message."""
-        mock_settings = MagicMock(
-            is_configured=True,
-            base_url="https://example.com",
-            username="admin",
-            app_password=MagicMock(get_secret_value=MagicMock(return_value="pass")),
-            timeout_connect=10.0,
-            timeout_read=30.0,
-            verify_ssl=True,
-        )
-
         with (
-            patch("app.presentation.cli.wp_commands.get_wp_settings", return_value=mock_settings),
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
             patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
         ):
             mock_instance = MockClient.return_value
@@ -189,14 +209,232 @@ class TestWPTestCommand:
             assert "WordPress error" in result.output
 
 
+# =============================================================================
+# astra wp fetch
+# =============================================================================
+
+
+class TestWPFetchCommand:
+    """Tests for ``astra wp fetch``."""
+
+    def test_fetch_not_configured(self, cli_runner: CliRunner) -> None:
+        """Should fail gracefully when WordPress is not configured."""
+        with patch("app.presentation.cli.wp_commands.get_wp_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(is_configured=False)
+
+            result = cli_runner.invoke(cli, ["wp", "fetch"])
+            assert result.exit_code == 1
+            assert "not configured" in result.output.lower()
+
+    def test_fetch_success(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+        mock_post_list: WPPostList,
+    ) -> None:
+        """Should display posts in a table on success."""
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.get_posts.return_value = mock_post_list
+
+            result = cli_runner.invoke(cli, ["wp", "fetch"])
+
+            assert result.exit_code == 0
+            assert "Connected" in result.output
+            assert "Retrieved 3 posts" in result.output
+            assert "Diwali NYC 2026" in result.output
+            assert "Chhath USA" in result.output
+            assert "Holi Boston" in result.output
+            assert "120" in result.output
+
+    def test_fetch_empty_result(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+    ) -> None:
+        """Should display 'no posts found' when result is empty."""
+        empty_list = WPPostList(posts=[], total=0, total_pages=0, page=1, per_page=10)
+
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.get_posts.return_value = empty_list
+
+            result = cli_runner.invoke(cli, ["wp", "fetch"])
+
+            assert result.exit_code == 0
+            assert "No posts found" in result.output
+
+    def test_fetch_with_limit(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+        mock_post_list: WPPostList,
+    ) -> None:
+        """Should pass --limit to get_posts()."""
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.get_posts.return_value = mock_post_list
+
+            result = cli_runner.invoke(cli, ["wp", "fetch", "--limit", "5"])
+
+            assert result.exit_code == 0
+            mock_instance.get_posts.assert_called_once_with(
+                per_page=5, page=1, search="", status="publish"
+            )
+
+    def test_fetch_with_search(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+        mock_post_list: WPPostList,
+    ) -> None:
+        """Should pass --search to get_posts()."""
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.get_posts.return_value = mock_post_list
+
+            result = cli_runner.invoke(cli, ["wp", "fetch", "--search", "Diwali"])
+
+            assert result.exit_code == 0
+            mock_instance.get_posts.assert_called_once_with(
+                per_page=10, page=1, search="Diwali", status="publish"
+            )
+
+    def test_fetch_with_page(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+        mock_post_list: WPPostList,
+    ) -> None:
+        """Should pass --page to get_posts()."""
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.get_posts.return_value = mock_post_list
+
+            result = cli_runner.invoke(cli, ["wp", "fetch", "--page", "2"])
+
+            assert result.exit_code == 0
+            mock_instance.get_posts.assert_called_once_with(
+                per_page=10, page=2, search="", status="publish"
+            )
+
+    def test_fetch_auth_error(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+    ) -> None:
+        """Should show auth error for fetch command."""
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.connect.side_effect = AuthenticationError("Bad credentials")
+
+            result = cli_runner.invoke(cli, ["wp", "fetch"])
+
+            assert result.exit_code == 1
+            assert "Authentication failed" in result.output
+
+    def test_fetch_rate_limit_error(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+    ) -> None:
+        """Should show rate limit error for fetch command."""
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.connect.side_effect = RateLimitError()
+
+            result = cli_runner.invoke(cli, ["wp", "fetch"])
+
+            assert result.exit_code == 1
+            assert "Rate limited" in result.output
+
+    def test_fetch_pagination_info(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+    ) -> None:
+        """Should show pagination info when multiple pages exist."""
+        multi_page_list = WPPostList(
+            posts=[WPPost(id=1, title="Test Post", status="publish", slug="test")],
+            total=30,
+            total_pages=3,
+            page=1,
+            per_page=10,
+        )
+
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.get_posts.return_value = multi_page_list
+
+            result = cli_runner.invoke(cli, ["wp", "fetch"])
+
+            assert result.exit_code == 0
+            assert "Page 1 of 3" in result.output
+            assert "30 total posts" in result.output
+
+
+# =============================================================================
+# Help / Discovery
+# =============================================================================
+
+
 class TestWPHelpCommand:
     """Tests for the ``astra wp`` help output."""
 
     def test_wp_help(self, cli_runner: CliRunner) -> None:
-        """``astra wp --help`` should list the test command."""
+        """``astra wp --help`` should list both test and fetch commands."""
         result = cli_runner.invoke(cli, ["wp", "--help"])
         assert result.exit_code == 0
         assert "test" in result.output
+        assert "fetch" in result.output
 
     def test_main_help_includes_wp(self, cli_runner: CliRunner) -> None:
         """``astra --help`` should show the wp subcommand."""

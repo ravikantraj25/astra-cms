@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import HttpUrl, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.shared.constants import DEFAULT_LOG_LEVEL
@@ -21,6 +21,8 @@ class WordPressSettings(BaseSettings):
 
     Loaded from environment variables prefixed with ``WP_``.
     The application password should be stored as a secret.
+
+    ``base_url`` is validated as an HTTP(S) URL when set.
     """
 
     model_config = SettingsConfigDict(
@@ -38,14 +40,20 @@ class WordPressSettings(BaseSettings):
     timeout_read: float = 30.0
     verify_ssl: bool = True
 
+    @model_validator(mode="after")
+    def _validate_base_url(self) -> WordPressSettings:
+        """Validate that ``base_url`` is a proper HTTP(S) URL when provided."""
+        if self.base_url:
+            # Let Pydantic's HttpUrl do the heavy lifting
+            parsed = HttpUrl(self.base_url)
+            # Normalise: strip trailing slashes
+            self.base_url = str(parsed).rstrip("/")
+        return self
+
     @property
     def is_configured(self) -> bool:
         """Return ``True`` when all required WordPress fields are set."""
-        return bool(
-            self.base_url
-            and self.username
-            and self.app_password.get_secret_value()
-        )
+        return bool(self.base_url and self.username and self.app_password.get_secret_value())
 
 
 class AppSettings(BaseSettings):

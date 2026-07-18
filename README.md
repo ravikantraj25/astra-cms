@@ -2,9 +2,9 @@
 
 # ✦ Astra CMS
 
-**A modern, AI-powered headless CMS migration and management toolkit.**
+**AI-powered Editorial Operating System for WordPress.**
 
-[![CI](https://github.com/astra-cms/astra-cms/actions/workflows/ci.yml/badge.svg)](https://github.com/astra-cms/astra-cms/actions/workflows/ci.yml)
+[![CI](https://github.com/ravikantraj25/astra-cms/actions/workflows/ci.yml/badge.svg)](https://github.com/ravikantraj25/astra-cms/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -40,7 +40,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/astra-cms/astra-cms.git
+git clone https://github.com/ravikantraj25/astra-cms.git
 cd astra-cms
 
 # Create virtual environment & install dependencies
@@ -63,12 +63,66 @@ cp .env.example .env
 
 ## Usage
 
+### General Commands
+
 ```bash
 # Show the current version
 astra version
 
 # Run system diagnostics
 astra doctor
+```
+
+### WordPress Connection
+
+Test the connection to your WordPress site:
+
+```bash
+# Set credentials in .env
+# WP_BASE_URL=https://your-site.com
+# WP_USERNAME=admin
+# WP_APP_PASSWORD=xxxx xxxx xxxx xxxx
+
+# Test the connection
+astra wp test
+```
+
+### Fetch Posts
+
+Fetch posts from WordPress and display them in a table:
+
+```bash
+# Fetch the latest 10 posts
+astra wp fetch
+
+# Fetch 5 posts
+astra wp fetch --limit 5
+
+# Fetch page 2
+astra wp fetch --page 2
+
+# Search posts
+astra wp fetch --search "Diwali"
+
+# Fetch drafts
+astra wp fetch --status draft
+```
+
+**Example output:**
+
+```
+  Fetching posts...
+  ✔ Connected
+
+  Retrieved 5 posts
+
+  ID      Status      Title
+  ──────────────────────────────────────────────
+  120     publish     Diwali NYC 2026
+  121     publish     Chhath USA
+  122     draft       Holi Boston
+  123     publish     Ganesh Dallas
+  124     publish     Dussehra Sydney
 ```
 
 ---

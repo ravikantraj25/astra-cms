@@ -8,6 +8,7 @@ Usage::
     astra version
     astra doctor
     astra wp test
+    astra wp fetch
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ import platform
 import shutil
 import sys
 from importlib.metadata import version as pkg_version
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -119,9 +119,9 @@ def _status_icon(ok: bool) -> str:
 def _check_package(table: Table, name: str) -> None:
     """Add a row for an installed Python package."""
     try:
-        ver: Optional[str] = pkg_version(name)
+        ver: str | None = pkg_version(name)
         table.add_row(f"Package: {name}", _status_icon(True), f"v{ver}")
-    except Exception:  # noqa: BLE001
+    except Exception:
         table.add_row(f"Package: {name}", _status_icon(False), "not installed")
 
 

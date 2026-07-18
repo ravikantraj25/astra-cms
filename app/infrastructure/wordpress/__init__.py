@@ -4,7 +4,7 @@ Public API::
 
     from app.infrastructure.wordpress import WordPressClient
     from app.infrastructure.wordpress.exceptions import AuthenticationError
-    from app.infrastructure.wordpress.models import WPSiteInfo, WPUser
+    from app.infrastructure.wordpress.models import WPSiteInfo, WPUser, WPPost
 """
 
 from app.infrastructure.wordpress.client import WordPressClient
@@ -12,17 +12,27 @@ from app.infrastructure.wordpress.exceptions import (
     APIError,
     AuthenticationError,
     ConnectionError,
+    RateLimitError,
     TimeoutError,
     WordPressError,
 )
-from app.infrastructure.wordpress.models import WPHealthCheck, WPSiteInfo, WPUser
+from app.infrastructure.wordpress.models import (
+    WPHealthCheck,
+    WPPost,
+    WPPostList,
+    WPSiteInfo,
+    WPUser,
+)
 
 __all__ = [
     "APIError",
     "AuthenticationError",
     "ConnectionError",
+    "RateLimitError",
     "TimeoutError",
     "WPHealthCheck",
+    "WPPost",
+    "WPPostList",
     "WPSiteInfo",
     "WPUser",
     "WordPressClient",

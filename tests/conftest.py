@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Generator
-
 import pytest
 from typer.testing import CliRunner
 
@@ -17,7 +15,7 @@ def cli_runner() -> CliRunner:
 
 
 @pytest.fixture()
-def invoke(cli_runner: CliRunner):  # noqa: ANN201
+def invoke(cli_runner: CliRunner):
     """Return a convenience callable that invokes the CLI.
 
     Usage::
