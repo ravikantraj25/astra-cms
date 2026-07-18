@@ -17,6 +17,7 @@ import platform
 import shutil
 import sys
 from importlib.metadata import version as pkg_version
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -24,6 +25,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from app import __version__
+from app.application.parser import parse_html_file
 from app.presentation.cli.wp_commands import wp_app
 from app.shared.constants import APP_NAME
 
@@ -105,6 +107,49 @@ def doctor() -> None:
     _check_binary(table, "docker")
 
     console.print(table)
+    console.print()
+
+
+@cli.command(name="parse")
+def parse_html(
+    file_path: Path = typer.Argument(  # noqa: B008
+        ...,
+        help="Path to the HTML file to parse.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+) -> None:
+    """Parse an HTML file and display the extracted Article structure."""
+    try:
+        article = parse_html_file(file_path)
+    except FileNotFoundError as err:
+        console.print(f"  [red]✘ File not found:[/red] [dim]{file_path}[/dim]")
+        raise typer.Exit(code=1) from err
+
+    console.print()
+    console.print(f"  [dim]Parsed[/dim] [cyan]{file_path}[/cyan]")
+    console.print()
+
+    table = Table(show_header=False, padding=(0, 2), box=None)
+    table.add_column("Key", style="bold magenta", min_width=16)
+    table.add_column("Value", style="white")
+
+    table.add_row("Title", article.title or "[dim]None[/dim]")
+    table.add_row("Word count", str(article.word_count))
+    table.add_row("Images", str(len(article.images)))
+    table.add_row("Links", str(len(article.links)))
+    table.add_row("Tables", str(len(article.tables)))
+    table.add_row("Headings", str(len(article.headings)))
+
+    console.print(
+        Panel(
+            table,
+            border_style="bright_blue",
+            title=f"[bold]{APP_NAME}[/bold] — Parsing Summary",
+            padding=(1, 2),
+        )
+    )
     console.print()
 
 

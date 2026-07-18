@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import pytest
 from typer.testing import CliRunner
 
@@ -15,7 +18,7 @@ def cli_runner() -> CliRunner:
 
 
 @pytest.fixture()
-def invoke(cli_runner: CliRunner):
+def invoke(cli_runner: CliRunner) -> Callable[..., Any]:
     """Return a convenience callable that invokes the CLI.
 
     Usage::

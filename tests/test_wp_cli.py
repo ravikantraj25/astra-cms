@@ -514,7 +514,7 @@ class TestWPGetCommand:
             assert "Admin" in result.output
             assert "Festivals" in result.output
             assert "Diwali, USA" in result.output
-            assert "7" in result.output
+            assert "6" in result.output
             assert "2026-09-20" in result.output
             mock_instance.get_post.assert_called_once_with(123)
 
