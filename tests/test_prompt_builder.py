@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.application.prompt_builder import _detect_article_type, build_prompt
+from app.application.prompt_builder import _detect_article_type, build_prompt, build_analysis_prompt
 from app.domain.article import Article, Section
 
 
@@ -72,3 +72,24 @@ def test_build_prompt() -> None:
     # Assert update instructions are present
     assert "UPDATE INSTRUCTIONS" in prompt
     assert "Return the updated article as valid HTML." in prompt
+
+
+def test_build_analysis_prompt() -> None:
+    """It should build a well-formatted analysis prompt string."""
+    article = Article(
+        title="Analysis Article",
+        headings=["H1", "H2"],
+        paragraphs=["P1", "P2"],
+        images=[],
+        links=[],
+    )
+
+    prompt = build_analysis_prompt(article)
+
+    assert "ARTICLE ANALYSIS PROMPT" in prompt
+    assert "Title: Analysis Article" in prompt
+    assert "Word Count: 4" in prompt
+    assert "Headings: H1, H2" in prompt
+    assert "Number of paragraphs: 2" in prompt
+    assert "Number of images: 0" in prompt
+    assert "EXACTLY as a valid JSON object matching this schema" in prompt

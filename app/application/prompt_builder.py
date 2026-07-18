@@ -108,3 +108,47 @@ def build_prompt(article: Article) -> str:
     lines.append("=" * 60)
 
     return "\n".join(lines)
+
+
+def build_analysis_prompt(article: Article) -> str:
+    """Build an AI prompt for analyzing an Article.
+
+    The generated prompt instructs the AI to return a JSON object with analysis.
+    """
+    lines: list[str] = []
+    lines.append("=" * 60)
+    lines.append("ARTICLE ANALYSIS PROMPT")
+    lines.append("=" * 60)
+    lines.append("")
+    lines.append(f"Title: {article.title or 'Untitled'}")
+    lines.append(f"Article Type: {_detect_article_type(article)}")
+    lines.append(f"Word Count: {article.word_count}")
+
+    if article.meta_description:
+        lines.append(f"Meta Description: {article.meta_description}")
+
+    lines.append("")
+    lines.append("Here is the parsed content structure:")
+    if article.headings:
+        lines.append(f"Headings: {', '.join(article.headings)}")
+    lines.append(f"Number of paragraphs: {len(article.paragraphs)}")
+    lines.append(f"Number of images: {len(article.images)}")
+    lines.append(f"Number of links: {len(article.links)}")
+
+    lines.append("")
+    lines.append("-" * 60)
+    lines.append("ANALYSIS INSTRUCTIONS")
+    lines.append("-" * 60)
+    lines.append("")
+    lines.append("Please analyze the article structure and metadata above.")
+    lines.append("Provide your output EXACTLY as a valid JSON object matching this schema:")
+    lines.append("{")
+    lines.append('  "seo_score": 85,')
+    lines.append('  "readability_score": 70,')
+    lines.append('  "strengths": ["string"],')
+    lines.append('  "weaknesses": ["string"],')
+    lines.append('  "suggestions": ["string"]')
+    lines.append("}")
+    lines.append("Do NOT wrap the JSON in markdown code blocks. Return ONLY valid JSON.")
+
+    return "\n".join(lines)

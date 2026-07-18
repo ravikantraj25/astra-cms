@@ -22,7 +22,7 @@ def test_generate_prompt_success(
     """It should generate a prompt and save it to the output directory."""
     # Change to tmp_path so "output/prompt.txt" is written safely
     monkeypatch.chdir(tmp_path)
-    
+
     # Create a dummy HTML file
     file_path = tmp_path / "post_prompt.html"
     file_path.write_text(

@@ -261,6 +261,92 @@ def generate_prompt(
     console.print()
 
 
+@cli.command(name="analyze-ai")
+def analyze_article_ai(
+    file_path: Path = typer.Argument(  # noqa: B008
+        ...,
+        help="Path to the HTML file to analyze with AI.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+) -> None:
+    """Analyze an HTML file using Groq AI and save JSON output."""
+    import json
+
+    from app.application.prompt_builder import build_analysis_prompt
+    from app.infrastructure.config.settings import get_groq_settings
+    from app.infrastructure.providers.groq_provider import GroqProvider
+
+    try:
+        article = parse_html_file(file_path)
+    except FileNotFoundError as err:
+        console.print(f"  [red]✘ File not found:[/red] [dim]{file_path}[/dim]")
+        raise typer.Exit(code=1) from err
+
+    settings = get_groq_settings()
+    if not settings.is_configured:
+        console.print("  [red]✘ Groq API key is not configured.[/red]")
+        console.print("  [dim]Please set GROQ_API_KEY in your .env file.[/dim]")
+        raise typer.Exit(code=1)
+
+    console.print()
+    console.print(f"  [dim]Analyzing[/dim] [cyan]{file_path}[/cyan] [dim]with Groq AI...[/dim]")
+
+    prompt = build_analysis_prompt(article)
+    provider = GroqProvider(settings)
+
+    try:
+        response_text = provider.generate(prompt)
+    except Exception as e:
+        console.print(f"  [red]✘ AI Generation failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    # Clean the response in case the AI added markdown blocks despite instructions
+    clean_text = response_text.strip()
+    if clean_text.startswith("```json"):
+        clean_text = clean_text[7:]
+    elif clean_text.startswith("```"):
+        clean_text = clean_text[3:]
+    if clean_text.endswith("```"):
+        clean_text = clean_text[:-3]
+    clean_text = clean_text.strip()
+
+    try:
+        parsed_json = json.loads(clean_text)
+    except json.JSONDecodeError:
+        console.print("  [yellow]⚠ AI did not return valid JSON. Saving raw output.[/yellow]")
+        parsed_json = {"raw_output": clean_text}
+
+    output_dir = Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / "analysis.json"
+    output_file.write_text(json.dumps(parsed_json, indent=2), encoding="utf-8")
+
+    console.print()
+    table = Table(show_header=False, padding=(0, 2), box=None)
+    table.add_column("Key", style="bold magenta", min_width=16)
+    table.add_column("Value", style="white")
+
+    table.add_row("Status", "[green]Success[/green]")
+    table.add_row("Saved To", str(output_file))
+
+    if "seo_score" in parsed_json:
+        table.add_row("SEO Score", str(parsed_json["seo_score"]))
+    if "readability_score" in parsed_json:
+        table.add_row("Readability", str(parsed_json["readability_score"]))
+
+    console.print(
+        Panel(
+            table,
+            border_style="bright_blue",
+            title=f"[bold]{APP_NAME}[/bold] — AI Analysis",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
