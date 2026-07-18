@@ -21,9 +21,20 @@ class Link(BaseModel):
     title: str = Field(default="", description="The title attribute.")
 
 
+class Section(BaseModel):
+    """A detected section within the article."""
+
+    name: str = Field(description="Name of the section (e.g., Introduction, Conclusion).")
+    type: str = Field(description="Type of the section (e.g., introduction, heading, image).")
+    start_position: int = Field(description="Start character index in the raw HTML string.")
+    end_position: int = Field(description="End character index in the raw HTML string.")
+    content: str = Field(description="The textual content or raw HTML of this section.")
+
+
 class Article(BaseModel):
     """A structured representation of a parsed HTML article."""
 
+    raw_html: str = Field(default="", description="The original raw HTML string.")
     title: str = Field(default="", description="The title of the article (from title tag or h1).")
     meta_description: str = Field(default="", description="The meta description if present.")
     headings: list[str] = Field(default_factory=list, description="All heading texts (h1-h6).")
@@ -36,6 +47,10 @@ class Article(BaseModel):
     code_blocks: list[str] = Field(
         default_factory=list,
         description="Texts of code blocks (pre/code).",
+    )
+    sections: list[Section] = Field(
+        default_factory=list,
+        description="Detected sections (e.g., Introduction, Conclusion).",
     )
 
     @property

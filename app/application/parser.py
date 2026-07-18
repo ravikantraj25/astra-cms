@@ -109,6 +109,7 @@ def parse_html_string(html: str) -> Article:
             code_blocks.append(code.text.strip())
 
     return Article(
+        raw_html=html,
         title=title,
         meta_description=meta_description,
         headings=headings,

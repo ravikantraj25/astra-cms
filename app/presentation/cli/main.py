@@ -153,6 +153,57 @@ def parse_html(
     console.print()
 
 
+@cli.command(name="analyze")
+def analyze_html(
+    file_path: Path = typer.Argument(  # noqa: B008
+        ...,
+        help="Path to the HTML file to analyze.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+) -> None:
+    """Analyze an HTML file to detect semantic sections."""
+    try:
+        from app.application.section_detector import detect_sections
+
+        article = parse_html_file(file_path)
+        article = detect_sections(article)
+    except FileNotFoundError as err:
+        console.print(f"  [red]✘ File not found:[/red] [dim]{file_path}[/dim]")
+        raise typer.Exit(code=1) from err
+
+    console.print()
+    console.print(f"  [dim]Analyzed[/dim] [cyan]{file_path}[/cyan]")
+    console.print()
+
+    if not article.sections:
+        console.print("  [yellow]No sections detected.[/yellow]")
+        return
+
+    table = Table(show_header=True, header_style="bold magenta", padding=(0, 2), box=None)
+    table.add_column("Type", style="cyan", min_width=16)
+    table.add_column("Name", style="white")
+    table.add_column("Pos (Start-End)", style="dim")
+
+    for section in article.sections:
+        table.add_row(
+            section.type,
+            section.name,
+            f"{section.start_position}-{section.end_position}",
+        )
+
+    console.print(
+        Panel(
+            table,
+            border_style="bright_blue",
+            title=f"[bold]{APP_NAME}[/bold] — Detected Sections",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
