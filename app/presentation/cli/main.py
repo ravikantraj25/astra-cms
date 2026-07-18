@@ -206,6 +206,61 @@ def analyze_html(
     console.print()
 
 
+@cli.command(name="prompt")
+def generate_prompt(
+    file_path: Path = typer.Argument(  # noqa: B008
+        ...,
+        help="Path to the HTML file to build a prompt from.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+) -> None:
+    """Build an AI prompt from a parsed HTML file and save to output/prompt.txt."""
+    from app.application.prompt_builder import build_prompt
+    from app.application.section_detector import detect_sections
+
+    try:
+        article = parse_html_file(file_path)
+    except FileNotFoundError as err:
+        console.print(f"  [red]✘ File not found:[/red] [dim]{file_path}[/dim]")
+        raise typer.Exit(code=1) from err
+
+    article = detect_sections(article)
+    prompt_text = build_prompt(article)
+
+    # Save to output/prompt.txt
+    output_dir = Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / "prompt.txt"
+    output_file.write_text(prompt_text, encoding="utf-8")
+
+    console.print()
+    console.print(f"  [dim]Parsed[/dim]    [cyan]{file_path}[/cyan]")
+    console.print(f"  [dim]Sections[/dim]  [cyan]{len(article.sections)} detected[/cyan]")
+    console.print()
+
+    table = Table(show_header=False, padding=(0, 2), box=None)
+    table.add_column("Key", style="bold magenta", min_width=16)
+    table.add_column("Value", style="white")
+
+    table.add_row("Title", article.title or "[dim]Untitled[/dim]")
+    table.add_row("Word Count", str(article.word_count))
+    table.add_row("Sections", str(len(article.sections)))
+    table.add_row("Prompt Length", f"{len(prompt_text)} chars")
+    table.add_row("Saved To", str(output_file))
+
+    console.print(
+        Panel(
+            table,
+            border_style="bright_blue",
+            title=f"[bold]{APP_NAME}[/bold] — Prompt Generated",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 

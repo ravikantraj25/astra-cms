@@ -19,9 +19,7 @@ def cli_runner() -> CliRunner:
 def test_ai_health_not_configured(cli_runner: CliRunner) -> None:
     """It should show Not Configured if API key is missing."""
     with patch("app.presentation.cli.ai_commands.get_groq_settings") as mock_settings:
-        mock_settings.return_value = MagicMock(
-            is_configured=False, model="llama3-8b-8192"
-        )
+        mock_settings.return_value = MagicMock(is_configured=False, model="llama3-8b-8192")
 
         result = cli_runner.invoke(cli, ["ai", "health"])
 
