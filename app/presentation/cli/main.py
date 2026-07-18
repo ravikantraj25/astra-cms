@@ -346,6 +346,112 @@ def analyze_article_ai(
     )
     console.print()
 
+    console.print()
+
+
+@cli.command(name="plan")
+def generate_plan(
+    analysis_path: Path = typer.Argument(  # noqa: B008
+        ...,
+        help="Path to the JSON analysis file.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+    article_path: Path = typer.Option(  # noqa: B008
+        None,
+        "--article",
+        "-a",
+        help=(
+            "Path to the original HTML file. If not provided, it will try to "
+            "find one in the same directory."
+        ),
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+) -> None:
+    """Generate an Update Plan from an article and its AI analysis."""
+    import json
+
+    from app.application.planner import build_update_plan
+    from app.application.section_detector import detect_sections
+
+    try:
+        analysis_data = json.loads(analysis_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as err:
+        console.print(f"  [red]✘ Invalid JSON in analysis file:[/red] [dim]{analysis_path}[/dim]")
+        raise typer.Exit(code=1) from err
+
+    # Resolve article path if not provided
+    if not article_path:
+        html_files = list(analysis_path.parent.glob("*.html"))
+        if len(html_files) == 1:
+            article_path = html_files[0]
+        elif len(html_files) > 1:
+            console.print("  [red]✘ Multiple HTML files found. Please specify --article.[/red]")
+            raise typer.Exit(code=1)
+        else:
+            console.print(
+                "  [red]✘ No HTML files found in the directory. Please specify --article.[/red]"
+            )
+            raise typer.Exit(code=1)
+
+    try:
+        article = parse_html_file(article_path)
+    except FileNotFoundError as err:
+        console.print(f"  [red]✘ File not found:[/red] [dim]{article_path}[/dim]")
+        raise typer.Exit(code=1) from err
+
+    article = detect_sections(article)
+    plan = build_update_plan(article, analysis_data)
+
+    output_dir = analysis_path.parent
+    output_file = output_dir / "update_plan.json"
+
+    # Save the plan
+    plan_dict = plan.model_dump()
+    output_file.write_text(json.dumps(plan_dict, indent=2), encoding="utf-8")
+
+    console.print()
+    console.print(f"  [dim]Generated Plan for[/dim] [cyan]{article_path}[/cyan]")
+    console.print()
+
+    if not plan.actions:
+        console.print("  [yellow]No actions in plan.[/yellow]")
+        return
+
+    table = Table(show_header=True, header_style="bold magenta", padding=(0, 2), box=None)
+    table.add_column("Section", style="cyan")
+    table.add_column("Reason", style="white")
+    table.add_column("Priority", style="dim")
+    table.add_column("Confidence", style="magenta")
+    table.add_column("Action", style="bold green")
+
+    for action in plan.actions:
+        action_style = (
+            "[bold green]Update[/bold green]" if action.action == "Update" else "[dim]Skip[/dim]"
+        )
+        table.add_row(
+            action.section,
+            action.reason,
+            action.priority,
+            f"{action.confidence}%",
+            action_style,
+        )
+
+    console.print(
+        Panel(
+            table,
+            border_style="bright_blue",
+            title=f"[bold]{APP_NAME}[/bold] — Update Plan",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+    console.print(f"  [dim]Saved To:[/dim] {output_file}")
+    console.print()
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

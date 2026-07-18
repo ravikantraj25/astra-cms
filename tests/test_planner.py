@@ -1,0 +1,64 @@
+"""Tests for the Update Planner logic."""
+
+from __future__ import annotations
+
+from app.application.planner import build_update_plan
+from app.domain.article import Article, Section
+
+
+def test_build_update_plan_empty() -> None:
+    """It should return an empty plan if no sections are present."""
+    article = Article(title="No Sections")
+    plan = build_update_plan(article, {})
+    assert len(plan.actions) == 0
+
+
+def test_build_update_plan_with_matches() -> None:
+    """It should correctly identify sections to update based on analysis."""
+    article = Article(
+        title="Test Article",
+        sections=[
+            Section(
+                name="FAQ",
+                type="heading",
+                start_position=0,
+                end_position=10,
+                content="FAQ content",
+            ),
+            Section(
+                name="History",
+                type="heading",
+                start_position=20,
+                end_position=30,
+                content="History content",
+            ),
+            Section(
+                name="Conclusion",
+                type="heading",
+                start_position=40,
+                end_position=50,
+                content="End",
+            ),
+        ],
+    )
+
+    analysis = {
+        "weaknesses": ["The FAQ section is missing details."],
+        "suggestions": ["Add more content to the History section."],
+    }
+
+    plan = build_update_plan(article, analysis)
+
+    assert len(plan.actions) == 3
+
+    faq_action = next(a for a in plan.actions if a.section == "FAQ")
+    assert faq_action.action == "Update"
+    assert faq_action.priority == "High"
+
+    history_action = next(a for a in plan.actions if a.section == "History")
+    assert history_action.action == "Update"
+    assert history_action.priority == "High"
+
+    conclusion_action = next(a for a in plan.actions if a.section == "Conclusion")
+    assert conclusion_action.action == "Skip"
+    assert conclusion_action.priority == "Low"

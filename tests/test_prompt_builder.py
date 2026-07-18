@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from app.application.prompt_builder import _detect_article_type, build_prompt, build_analysis_prompt
+from app.application.prompt_builder import (
+    _detect_article_type,
+    build_analysis_prompt,
+    build_prompt,
+)
 from app.domain.article import Article, Section
 
 
