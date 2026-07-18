@@ -1,0 +1,65 @@
+# =============================================================================
+# Astra CMS — .gitignore
+# =============================================================================
+
+# --------------- Python ---------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.whl
+
+# --------------- Virtual environments ---------------
+.venv/
+venv/
+ENV/
+env/
+
+# --------------- IDE / Editor ---------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# --------------- OS ---------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --------------- Environment ---------------
+.env
+.env.local
+.env.*.local
+
+# --------------- Testing / Coverage ---------------
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --------------- Logs ---------------
+logs/*.log
+*.log
+
+# --------------- Data & Output ---------------
+backups/*
+!backups/.gitkeep
+output/*
+!output/.gitkeep
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# --------------- Docker ---------------
+*.pid
