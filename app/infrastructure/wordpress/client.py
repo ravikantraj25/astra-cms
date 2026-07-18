@@ -400,7 +400,7 @@ class WordPressClient:
             response = client.request("GET", _WP_JSON_PATH)
 
             # The WP-Version header is sometimes available
-            wp_header = response.headers.get("x-wp-version", "")
+            wp_header: str = response.headers.get("x-wp-version", "")
             if wp_header:
                 return wp_header
 

@@ -77,7 +77,7 @@ class _ContextFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         if not hasattr(record, "log_context"):
-            record.log_context = ""  # type: ignore[attr-defined]
+            record.log_context = ""  # type: ignore[attr-defined,unused-ignore]
         return True
 
 

@@ -73,8 +73,14 @@ class WPPost(BaseModel):
             excerpt_obj.get("rendered", "") if isinstance(excerpt_obj, dict) else str(excerpt_obj)
         )
 
+        raw_id = data.get("id", 0)
+        post_id: int = raw_id if isinstance(raw_id, int) else int(str(raw_id))
+
+        raw_author = data.get("author", 0)
+        author_id: int = raw_author if isinstance(raw_author, int) else int(str(raw_author))
+
         return cls(
-            id=int(data.get("id", 0)),  # type: ignore[arg-type]
+            id=post_id,
             title=title,
             slug=str(data.get("slug", "")),
             status=str(data.get("status", "publish")),
@@ -82,7 +88,7 @@ class WPPost(BaseModel):
             date=str(data.get("date", "")),
             modified=str(data.get("modified", "")),
             excerpt=excerpt,
-            author=int(data.get("author", 0)),  # type: ignore[arg-type]
+            author=author_id,
         )
 
 
