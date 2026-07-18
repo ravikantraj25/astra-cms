@@ -26,6 +26,7 @@ from rich.table import Table
 
 from app import __version__
 from app.application.parser import parse_html_file
+from app.presentation.cli.ai_commands import ai_app
 from app.presentation.cli.wp_commands import wp_app
 from app.shared.constants import APP_NAME
 
@@ -40,6 +41,7 @@ cli = typer.Typer(
 )
 
 cli.add_typer(wp_app, name="wp")
+cli.add_typer(ai_app, name="ai")
 
 console = Console()
 

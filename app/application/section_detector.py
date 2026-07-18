@@ -123,8 +123,7 @@ def detect_sections(article: Article) -> Article:
     # Look for <time> tags or paragraphs with
     # date patterns
     date_pattern = re.compile(
-        r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
-        r"[a-z]* \d{1,2},? \d{4}\b",
+        r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)" r"[a-z]* \d{1,2},? \d{4}\b",
         re.IGNORECASE,
     )
     for p in soup.find_all(["p", "time"]):
@@ -157,11 +156,7 @@ def detect_sections(article: Article) -> Article:
 
     for vid in soup.find_all(["video", "iframe"]):
         src = str(vid.get("src", ""))
-        if (
-            vid.name == "iframe"
-            and "youtube" not in src.lower()
-            and "vimeo" not in src.lower()
-        ):
+        if vid.name == "iframe" and "youtube" not in src.lower() and "vimeo" not in src.lower():
             continue
         start_idx = find_position(src)
         sections.append(

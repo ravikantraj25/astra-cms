@@ -108,3 +108,33 @@ def get_wp_settings() -> WordPressSettings:
     same object without re-parsing.
     """
     return WordPressSettings()
+
+
+class GroqSettings(BaseSettings):
+    """Groq API settings.
+
+    Loaded from environment variables prefixed with ``GROQ_``.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="GROQ_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    api_key: SecretStr = SecretStr("")
+    model: str = "llama3-8b-8192"
+    base_url: str = "https://api.groq.com/openai/v1"
+
+    @property
+    def is_configured(self) -> bool:
+        """Return ``True`` when API key is set."""
+        return bool(self.api_key.get_secret_value())
+
+
+@lru_cache(maxsize=1)
+def get_groq_settings() -> GroqSettings:
+    """Return a cached singleton instance of :class:`GroqSettings`."""
+    return GroqSettings()
