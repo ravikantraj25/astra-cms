@@ -3,9 +3,12 @@
 Provides:
 - ``astra wp test``  — test the WordPress connection
 - ``astra wp fetch`` — fetch posts from WordPress
+- ``astra wp get``   — fetch a single post by ID
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -21,7 +24,8 @@ from app.infrastructure.wordpress.exceptions import (
     TimeoutError,
     WordPressError,
 )
-from app.shared.constants import APP_NAME
+from app.infrastructure.wordpress.models import _strip_html
+from app.shared.constants import APP_NAME, DEFAULT_ENCODING, OUTPUT_DIR
 
 wp_app = typer.Typer(
     name="wp",
@@ -239,6 +243,82 @@ def fetch_posts(
                 f" ({result.total} total posts)[/dim]"
             )
             console.print()
+
+    except WordPressError as exc:
+        _handle_wp_error(exc)
+        raise typer.Exit(code=1) from exc
+
+    finally:
+        client.close()
+
+
+@wp_app.command(name="get")
+def get_post(
+    post_id: int = typer.Argument(help="The WordPress post ID to fetch."),
+) -> None:
+    """Fetch a single WordPress post and save its HTML content.
+
+    Examples::
+
+        astra wp get 123
+        astra wp get 456
+    """
+    settings = _ensure_configured()
+
+    console.print()
+    console.print(f"  [dim]Fetching post {post_id}...[/dim]")
+
+    client = _create_client(settings)
+
+    try:
+        client.connect()
+        console.print("  [green]✔ Connected[/green]")
+        console.print()
+
+        detail = client.get_post(post_id)
+        post = detail.post
+
+        # ── Post details table ───────────────────────────────────────────
+        table = Table(show_header=False, padding=(0, 2), box=None)
+        table.add_column("Key", style="bold cyan", min_width=16)
+        table.add_column("Value", style="white")
+
+        table.add_row("ID", str(post.id))
+        table.add_row("Title", _strip_html(post.title))
+
+        if post.status == "publish":
+            table.add_row("Status", "[green]publish[/green]")
+        else:
+            table.add_row("Status", f"[yellow]{post.status}[/yellow]")
+
+        table.add_row("Author", detail.author_name)
+
+        # Show date (just the date part if ISO 8601)
+        display_date = post.date[:10] if len(post.date) >= 10 else post.date
+        table.add_row("Date", display_date)
+
+        table.add_row("Categories", ", ".join(detail.categories) or "None")
+        table.add_row("Tags", ", ".join(detail.tags) or "None")
+        table.add_row("Word Count", str(detail.word_count))
+
+        console.print(
+            Panel(
+                table,
+                border_style="bright_blue",
+                title=f"[bold]{APP_NAME}[/bold] — Post #{post.id}",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+
+        # ── Save raw HTML ────────────────────────────────────────────────
+        output_dir = Path(OUTPUT_DIR)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_file = output_dir / f"post_{post.id}.html"
+        output_file.write_text(post.content_html, encoding=DEFAULT_ENCODING)
+
+        console.print(f"  [green]✔ Saved HTML to[/green] [cyan]{output_file}[/cyan]")
+        console.print()
 
     except WordPressError as exc:
         _handle_wp_error(exc)

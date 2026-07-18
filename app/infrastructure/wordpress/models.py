@@ -7,6 +7,8 @@ and post content.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 
@@ -34,6 +36,32 @@ class WPUser(BaseModel):
     roles: list[str] = Field(default_factory=list, description="Assigned roles.")
 
 
+# ── HTML helpers ─────────────────────────────────────────────────────────────
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(html: str) -> str:
+    """Remove HTML tags and collapse whitespace."""
+    return _HTML_TAG_RE.sub("", html).strip()
+
+
+def _word_count(html: str) -> int:
+    """Count words in an HTML string after stripping tags."""
+    return len(_strip_html(html).split())
+
+
+def _extract_rendered(data: dict[str, object], key: str) -> str:
+    """Extract a ``{rendered: ...}`` field from a WordPress API dict."""
+    obj = data.get(key, {})
+    if isinstance(obj, dict):
+        return str(obj.get("rendered", ""))
+    return str(obj)
+
+
+# ── Post Models ──────────────────────────────────────────────────────────────
+
+
 class WPPost(BaseModel):
     """WordPress post from ``GET /wp/v2/posts``.
 
@@ -50,6 +78,7 @@ class WPPost(BaseModel):
     date: str = Field(default="", description="Publication date (ISO 8601).")
     modified: str = Field(default="", description="Last modified date (ISO 8601).")
     excerpt: str = Field(default="", description="Post excerpt (rendered).")
+    content_html: str = Field(default="", description="Full post content (rendered HTML).")
     author: int = Field(default=0, description="Author user ID.")
 
     @classmethod
@@ -65,13 +94,9 @@ class WPPost(BaseModel):
         Returns:
             A validated :class:`WPPost`.
         """
-        title_obj = data.get("title", {})
-        title = title_obj.get("rendered", "") if isinstance(title_obj, dict) else str(title_obj)
-
-        excerpt_obj = data.get("excerpt", {})
-        excerpt = (
-            excerpt_obj.get("rendered", "") if isinstance(excerpt_obj, dict) else str(excerpt_obj)
-        )
+        title = _extract_rendered(data, "title")
+        excerpt = _extract_rendered(data, "excerpt")
+        content_html = _extract_rendered(data, "content")
 
         raw_id = data.get("id", 0)
         post_id: int = raw_id if isinstance(raw_id, int) else int(str(raw_id))
@@ -88,8 +113,23 @@ class WPPost(BaseModel):
             date=str(data.get("date", "")),
             modified=str(data.get("modified", "")),
             excerpt=excerpt,
+            content_html=content_html,
             author=author_id,
         )
+
+
+class WPPostDetail(BaseModel):
+    """Enriched single-post view with taxonomy and word count.
+
+    Built from a :class:`WPPost` plus supplementary API data
+    (categories, tags, author name).
+    """
+
+    post: WPPost = Field(description="The core post data.")
+    author_name: str = Field(default="Unknown", description="Author display name.")
+    categories: list[str] = Field(default_factory=list, description="Category names.")
+    tags: list[str] = Field(default_factory=list, description="Tag names.")
+    word_count: int = Field(default=0, description="Approximate word count.")
 
 
 class WPPostList(BaseModel):

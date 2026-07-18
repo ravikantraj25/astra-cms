@@ -19,9 +19,12 @@ from app.infrastructure.wordpress.exceptions import (
 from app.infrastructure.wordpress.models import (
     WPHealthCheck,
     WPPost,
+    WPPostDetail,
     WPPostList,
     WPSiteInfo,
     WPUser,
+    _strip_html,
+    _word_count,
 )
 
 # =============================================================================
@@ -744,3 +747,226 @@ class TestWordPressClientGetPosts:
 
         call_args = mock_httpx_client.request.call_args
         assert call_args.kwargs.get("params", {}).get("per_page") == "100"
+
+
+# =============================================================================
+# HTML Helper Tests
+# =============================================================================
+
+
+class TestModelHelpers:
+    """Tests for _strip_html and _word_count utility functions."""
+
+    def test_strip_html_removes_tags(self) -> None:
+        """_strip_html should remove all HTML tags."""
+        assert _strip_html("<p>Hello <strong>World</strong></p>") == "Hello World"
+
+    def test_strip_html_empty(self) -> None:
+        """_strip_html should handle empty strings."""
+        assert _strip_html("") == ""
+
+    def test_word_count_basic(self) -> None:
+        """_word_count should count words after stripping HTML."""
+        assert _word_count("<p>One two three four five</p>") == 5
+
+    def test_word_count_empty(self) -> None:
+        """_word_count should return 0 for empty content."""
+        assert _word_count("") == 0
+
+
+# =============================================================================
+# WPPostDetail Model Tests
+# =============================================================================
+
+
+class TestPostDetailModel:
+    """Tests for the WPPostDetail model."""
+
+    def test_post_detail_model(self) -> None:
+        """WPPostDetail should hold a post with enriched metadata."""
+        post = WPPost(id=123, title="Test", content_html="<p>Hello world</p>")
+        detail = WPPostDetail(
+            post=post,
+            author_name="Admin",
+            categories=["Festivals"],
+            tags=["Diwali", "USA"],
+            word_count=2,
+        )
+        assert detail.post.id == 123
+        assert detail.author_name == "Admin"
+        assert detail.categories == ["Festivals"]
+        assert detail.tags == ["Diwali", "USA"]
+        assert detail.word_count == 2
+
+
+# =============================================================================
+# Get Single Post Tests
+# =============================================================================
+
+
+class TestWordPressClientGetPost:
+    """Tests for the get_post() method."""
+
+    def test_get_post_success(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """get_post() should return a WPPostDetail with enriched metadata."""
+        post_json = {
+            "id": 123,
+            "title": {"rendered": "Diwali Celebration NYC"},
+            "slug": "diwali-celebration-nyc",
+            "status": "publish",
+            "link": "https://example.com/diwali-celebration-nyc/",
+            "date": "2026-09-20T10:00:00",
+            "modified": "2026-09-20T12:00:00",
+            "excerpt": {"rendered": "Celebrating Diwali in NYC."},
+            "content": {"rendered": "<p>Diwali is the festival of lights.</p>"},
+            "author": 1,
+            "categories": [5],
+            "tags": [10, 11],
+        }
+        author_json = {"id": 1, "name": "Admin", "slug": "admin"}
+        cat_json = {"id": 5, "name": "Festivals"}
+        tag1_json = {"id": 10, "name": "Diwali"}
+        tag2_json = {"id": 11, "name": "USA"}
+
+        post_resp = MagicMock(spec=httpx.Response)
+        post_resp.status_code = 200
+        post_resp.json.return_value = post_json
+
+        author_resp = MagicMock(spec=httpx.Response)
+        author_resp.status_code = 200
+        author_resp.json.return_value = author_json
+
+        cat_resp = MagicMock(spec=httpx.Response)
+        cat_resp.status_code = 200
+        cat_resp.json.return_value = cat_json
+
+        tag1_resp = MagicMock(spec=httpx.Response)
+        tag1_resp.status_code = 200
+        tag1_resp.json.return_value = tag1_json
+
+        tag2_resp = MagicMock(spec=httpx.Response)
+        tag2_resp.status_code = 200
+        tag2_resp.json.return_value = tag2_json
+
+        mock_httpx_client.request.side_effect = [
+            post_resp,  # GET /posts/123
+            author_resp,  # GET /users/1
+            cat_resp,  # GET /categories/5
+            tag1_resp,  # GET /tags/10
+            tag2_resp,  # GET /tags/11
+        ]
+
+        detail = wp_client.get_post(123)
+
+        assert detail.post.id == 123
+        assert detail.post.title == "Diwali Celebration NYC"
+        assert detail.author_name == "Admin"
+        assert detail.categories == ["Festivals"]
+        assert detail.tags == ["Diwali", "USA"]
+        assert detail.word_count == 6
+        assert detail.post.content_html == "<p>Diwali is the festival of lights.</p>"
+
+    def test_get_post_404(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """get_post() should raise APIError for a 404 response."""
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 404
+        response.reason_phrase = "Not Found"
+        response.json.return_value = {"message": "Post not found"}
+        mock_httpx_client.request.return_value = response
+
+        with pytest.raises(APIError) as exc_info:
+            wp_client.get_post(99999)
+        assert exc_info.value.status_code == 404
+
+    def test_get_post_auth_failure(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """get_post() should raise AuthenticationError on 401."""
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 401
+        response.reason_phrase = "Unauthorized"
+        response.json.return_value = {"message": "Invalid credentials"}
+        mock_httpx_client.request.return_value = response
+
+        with pytest.raises(AuthenticationError):
+            wp_client.get_post(123)
+
+    def test_get_post_timeout(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """get_post() should raise TimeoutError on timeout."""
+        mock_httpx_client.request.side_effect = httpx.TimeoutException("timed out")
+
+        with pytest.raises(TimeoutError):
+            wp_client.get_post(123)
+
+    def test_get_post_author_resolution_failure(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """get_post() should use 'Unknown' when author lookup fails."""
+        post_json = {
+            "id": 123,
+            "title": {"rendered": "Test Post"},
+            "content": {"rendered": "<p>Content</p>"},
+            "author": 999,
+            "categories": [],
+            "tags": [],
+        }
+        post_resp = MagicMock(spec=httpx.Response)
+        post_resp.status_code = 200
+        post_resp.json.return_value = post_json
+
+        # Author lookup returns 404
+        author_resp = MagicMock(spec=httpx.Response)
+        author_resp.status_code = 404
+        author_resp.reason_phrase = "Not Found"
+        author_resp.json.return_value = {"message": "User not found"}
+
+        mock_httpx_client.request.side_effect = [post_resp, author_resp]
+
+        detail = wp_client.get_post(123)
+
+        assert detail.author_name == "Unknown"
+        assert detail.post.id == 123
+
+    def test_get_post_no_taxonomy(
+        self,
+        wp_client: WordPressClient,
+        mock_httpx_client: MagicMock,
+    ) -> None:
+        """get_post() should handle posts with no categories or tags."""
+        post_json = {
+            "id": 123,
+            "title": {"rendered": "Simple Post"},
+            "content": {"rendered": "<p>Just text</p>"},
+            "author": 1,
+        }
+        post_resp = MagicMock(spec=httpx.Response)
+        post_resp.status_code = 200
+        post_resp.json.return_value = post_json
+
+        author_resp = MagicMock(spec=httpx.Response)
+        author_resp.status_code = 200
+        author_resp.json.return_value = {"id": 1, "name": "Admin"}
+
+        mock_httpx_client.request.side_effect = [post_resp, author_resp]
+
+        detail = wp_client.get_post(123)
+
+        assert detail.categories == []
+        assert detail.tags == []
+        assert detail.word_count == 2

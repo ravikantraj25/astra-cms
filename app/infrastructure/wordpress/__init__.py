@@ -19,6 +19,7 @@ from app.infrastructure.wordpress.exceptions import (
 from app.infrastructure.wordpress.models import (
     WPHealthCheck,
     WPPost,
+    WPPostDetail,
     WPPostList,
     WPSiteInfo,
     WPUser,
@@ -32,6 +33,7 @@ __all__ = [
     "TimeoutError",
     "WPHealthCheck",
     "WPPost",
+    "WPPostDetail",
     "WPPostList",
     "WPSiteInfo",
     "WPUser",

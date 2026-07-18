@@ -1,4 +1,4 @@
-"""Tests for the ``astra wp test`` and ``astra wp fetch`` CLI commands."""
+"""Tests for the ``astra wp test``, ``astra wp fetch``, and ``astra wp get`` CLI commands."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from app.infrastructure.wordpress.exceptions import (
 from app.infrastructure.wordpress.models import (
     WPHealthCheck,
     WPPost,
+    WPPostDetail,
     WPPostList,
     WPSiteInfo,
     WPUser,
@@ -430,14 +431,171 @@ class TestWPHelpCommand:
     """Tests for the ``astra wp`` help output."""
 
     def test_wp_help(self, cli_runner: CliRunner) -> None:
-        """``astra wp --help`` should list both test and fetch commands."""
+        """``astra wp --help`` should list test, fetch, and get commands."""
         result = cli_runner.invoke(cli, ["wp", "--help"])
         assert result.exit_code == 0
         assert "test" in result.output
         assert "fetch" in result.output
+        assert "get" in result.output
 
     def test_main_help_includes_wp(self, cli_runner: CliRunner) -> None:
         """``astra --help`` should show the wp subcommand."""
         result = cli_runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
         assert "wp" in result.output
+
+
+# =============================================================================
+# astra wp get
+# =============================================================================
+
+
+class TestWPGetCommand:
+    """Tests for ``astra wp get <post_id>``."""
+
+    @pytest.fixture()
+    def mock_post_detail(self) -> WPPostDetail:
+        """Return a mock WPPostDetail result."""
+        return WPPostDetail(
+            post=WPPost(
+                id=123,
+                title="Diwali Celebration NYC",
+                status="publish",
+                slug="diwali-celebration-nyc",
+                date="2026-09-20T10:00:00",
+                content_html="<p>Diwali is the festival of lights.</p>",
+                author=1,
+            ),
+            author_name="Admin",
+            categories=["Festivals"],
+            tags=["Diwali", "USA"],
+            word_count=6,
+        )
+
+    def test_get_not_configured(self, cli_runner: CliRunner) -> None:
+        """Should fail gracefully when WordPress is not configured."""
+        with patch("app.presentation.cli.wp_commands.get_wp_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(is_configured=False)
+
+            result = cli_runner.invoke(cli, ["wp", "get", "123"])
+            assert result.exit_code == 1
+            assert "not configured" in result.output.lower()
+
+    def test_get_success(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+        mock_post_detail: WPPostDetail,
+        tmp_path: object,
+    ) -> None:
+        """Should display post details and save HTML on success."""
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+            patch("app.presentation.cli.wp_commands.Path") as MockPath,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.get_post.return_value = mock_post_detail
+
+            # Mock the Path operations
+            mock_dir = MagicMock()
+            MockPath.return_value = mock_dir
+            mock_file = MagicMock()
+            mock_dir.__truediv__ = MagicMock(return_value=mock_file)
+
+            result = cli_runner.invoke(cli, ["wp", "get", "123"])
+
+            assert result.exit_code == 0
+            assert "Connected" in result.output
+            assert "Diwali Celebration NYC" in result.output
+            assert "Admin" in result.output
+            assert "Festivals" in result.output
+            assert "Diwali, USA" in result.output
+            assert "7" in result.output
+            assert "2026-09-20" in result.output
+            mock_instance.get_post.assert_called_once_with(123)
+
+    def test_get_404(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+    ) -> None:
+        """Should show error when post is not found."""
+        from app.infrastructure.wordpress.exceptions import APIError
+
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.connect.return_value = None
+            mock_instance.get_post.side_effect = APIError(
+                message="WordPress API error (HTTP 404): Post not found",
+                status_code=404,
+            )
+
+            result = cli_runner.invoke(cli, ["wp", "get", "99999"])
+
+            assert result.exit_code == 1
+            assert "WordPress error" in result.output
+
+    def test_get_auth_error(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+    ) -> None:
+        """Should show auth error for get command."""
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.connect.side_effect = AuthenticationError("Bad credentials")
+
+            result = cli_runner.invoke(cli, ["wp", "get", "123"])
+
+            assert result.exit_code == 1
+            assert "Authentication failed" in result.output
+
+    def test_get_saves_html_file(
+        self,
+        cli_runner: CliRunner,
+        mock_wp_settings: MagicMock,
+        mock_post_detail: WPPostDetail,
+    ) -> None:
+        """Should save the raw HTML content to output/post_{id}.html."""
+        with (
+            patch(
+                "app.presentation.cli.wp_commands.get_wp_settings",
+                return_value=mock_wp_settings,
+            ),
+            patch("app.presentation.cli.wp_commands.WordPressClient") as MockClient,
+            patch("app.presentation.cli.wp_commands.Path") as MockPath,
+        ):
+            mock_instance = MockClient.return_value
+            mock_instance.get_post.return_value = mock_post_detail
+
+            mock_output_dir = MagicMock()
+            MockPath.return_value = mock_output_dir
+            mock_file = MagicMock()
+            mock_output_dir.__truediv__ = MagicMock(return_value=mock_file)
+
+            result = cli_runner.invoke(cli, ["wp", "get", "123"])
+
+            assert result.exit_code == 0
+            # Verify mkdir was called
+            mock_output_dir.mkdir.assert_called_once_with(parents=True, exist_ok=True)
+            # Verify write_text was called with HTML content
+            mock_file.write_text.assert_called_once_with(
+                "<p>Diwali is the festival of lights.</p>",
+                encoding="utf-8",
+            )

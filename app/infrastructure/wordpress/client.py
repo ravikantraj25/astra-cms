@@ -38,9 +38,11 @@ from app.infrastructure.wordpress.exceptions import (
 from app.infrastructure.wordpress.models import (
     WPHealthCheck,
     WPPost,
+    WPPostDetail,
     WPPostList,
     WPSiteInfo,
     WPUser,
+    _word_count,
 )
 
 logger = get_logger("wordpress.client")
@@ -248,6 +250,46 @@ class WordPressClient:
             per_page=per_page,
         )
 
+    def get_post(self, post_id: int) -> WPPostDetail:
+        """Fetch a single post by ID with enriched metadata.
+
+        Retrieves the post, resolves the author name, category names,
+        tag names, and computes the word count from the rendered content.
+
+        Args:
+            post_id: The WordPress post ID.
+
+        Returns:
+            A :class:`WPPostDetail` containing the post and enriched metadata.
+
+        Raises:
+            APIError: If the post is not found (404).
+            AuthenticationError: If credentials are invalid.
+            WordPressError: On any other API or network failure.
+        """
+        data = self._request("GET", f"{_WP_V2_PATH}/posts/{post_id}")
+        post = WPPost.from_api_response(data)
+
+        # Resolve author name
+        author_name = "Unknown"
+        try:
+            author_data = self._request("GET", f"{_WP_V2_PATH}/users/{post.author}")
+            author_name = str(author_data.get("name", "Unknown"))
+        except WordPressError:
+            pass
+
+        # Resolve taxonomy names
+        categories = self._fetch_term_names(data, "categories")
+        tags = self._fetch_term_names(data, "tags")
+
+        return WPPostDetail(
+            post=post,
+            author_name=author_name,
+            categories=categories,
+            tags=tags,
+            word_count=_word_count(post.content_html),
+        )
+
     # ── Private helpers ──────────────────────────────────────────────────────
 
     def _ensure_connected(self) -> httpx.Client:
@@ -407,3 +449,26 @@ class WordPressClient:
             return "unknown"
         except Exception:
             return "unknown"
+
+    def _fetch_term_names(self, post_data: dict[str, object], taxonomy: str) -> list[str]:
+        """Resolve taxonomy term IDs to their display names.
+
+        Args:
+            post_data: The raw post dict from WordPress.
+            taxonomy: The taxonomy key (``"categories"`` or ``"tags"``).
+
+        Returns:
+            A list of term display names. Empty list on failure.
+        """
+        term_ids = post_data.get(taxonomy, [])
+        if not isinstance(term_ids, list) or not term_ids:
+            return []
+
+        names: list[str] = []
+        for tid in term_ids:
+            try:
+                term_data = self._request("GET", f"{_WP_V2_PATH}/{taxonomy}/{tid}")
+                names.append(str(term_data.get("name", f"ID:{tid}")))
+            except WordPressError:
+                names.append(f"ID:{tid}")
+        return names
