@@ -453,6 +453,89 @@ def generate_plan(
     console.print()
 
 
+@cli.command(name="diff")
+def diff_articles(
+    original_path: Path = typer.Argument(  # noqa: B008
+        ...,
+        help="Path to the original HTML file.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+    updated_path: Path = typer.Argument(  # noqa: B008
+        ...,
+        help="Path to the AI-updated HTML file.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+) -> None:
+    """Compare original HTML with AI output and generate a DiffReport."""
+    import json
+
+    from app.application.differ import build_diff_report
+
+    try:
+        original = parse_html_file(original_path)
+    except FileNotFoundError as err:
+        console.print(f"  [red]✘ File not found:[/red] [dim]{original_path}[/dim]")
+        raise typer.Exit(code=1) from err
+
+    try:
+        updated = parse_html_file(updated_path)
+    except FileNotFoundError as err:
+        console.print(f"  [red]✘ File not found:[/red] [dim]{updated_path}[/dim]")
+        raise typer.Exit(code=1) from err
+
+    report = build_diff_report(original, updated)
+
+    output_dir = original_path.parent
+    output_file = output_dir / "update_diff.json"
+
+    # Save the report
+    report_dict = report.model_dump()
+    output_file.write_text(json.dumps(report_dict, indent=2), encoding="utf-8")
+
+    console.print()
+    console.print(
+        f"  [dim]Compared[/dim] [cyan]{original_path.name}[/cyan] [dim]with[/dim] "
+        f"[cyan]{updated_path.name}[/cyan]"
+    )
+    console.print()
+
+    table = Table(show_header=True, header_style="bold magenta", padding=(0, 2), box=None)
+    table.add_column("Type", style="cyan")
+    table.add_column("Content (Snippet)", style="white")
+    table.add_column("Confidence", style="magenta")
+    table.add_column("Reason", style="dim")
+
+    for action in report.added:
+        table.add_row(
+            "[green]Added[/green]", action.content, f"{action.confidence}%", action.reason
+        )
+    for action in report.removed:
+        table.add_row("[red]Removed[/red]", action.content, f"{action.confidence}%", action.reason)
+    for action in report.modified:
+        table.add_row(
+            "[yellow]Modified[/yellow]", action.content, f"{action.confidence}%", action.reason
+        )
+
+    if not (report.added or report.removed or report.modified):
+        table.add_row("[dim]None[/dim]", "[dim]No differences found.[/dim]", "-", "-")
+
+    console.print(
+        Panel(
+            table,
+            border_style="bright_blue",
+            title=f"[bold]{APP_NAME}[/bold] — Update Diff Report",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+    console.print(f"  [dim]Saved To:[/dim] {output_file}")
+    console.print()
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
