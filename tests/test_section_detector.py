@@ -10,6 +10,7 @@ def test_detect_sections() -> None:
     <!DOCTYPE html>
     <html>
     <body>
+        <p>Aug 15, 2026 was a great day.</p>
         <h1>Main Title</h1>
         <p>This is the introduction.</p>
         <p>It continues here.</p>
@@ -23,6 +24,7 @@ def test_detect_sections() -> None:
         <h2>Venue</h2>
         <p>New York City</p>
 
+        <h2>Other Stuff</h2>
         <img src="test.jpg" alt="test image">
         <video src="video.mp4"></video>
 
@@ -31,7 +33,6 @@ def test_detect_sections() -> None:
 
         <h2>Conclusion</h2>
         <p>The end.</p>
-        <p>Aug 15, 2026 was a great day.</p>
     </body>
     </html>
     """

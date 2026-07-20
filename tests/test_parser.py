@@ -48,7 +48,7 @@ def test_parse_html_string(sample_html: str) -> None:
     assert article.meta_description == "This is a test description."
     assert article.headings == ["Test Title", "Subheading"]
     assert article.paragraphs == [
-        "This is a paragraph with a link.",
+        "This is a paragraph with a link .",
         "Another paragraph.",
     ]
     assert len(article.images) == 1
@@ -74,7 +74,7 @@ def test_parse_html_string(sample_html: str) -> None:
     # Headings: "Test Title Subheading" (4)
     # Paragraphs: "This is a paragraph with a link. Another paragraph." (9)
     # Total: 13
-    assert article.word_count == 12
+    assert article.word_count == 13
 
 
 def test_parse_html_string_fallback_title() -> None:

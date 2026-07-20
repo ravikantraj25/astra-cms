@@ -2,7 +2,32 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
 from pydantic import BaseModel, Field
+
+
+class SectionType(str, Enum):
+    """The supported section types."""
+
+    INTRODUCTION = "introduction"
+    HEADING = "heading"
+    PARAGRAPH = "paragraph"
+    IMAGE = "image"
+    LIST = "list"
+    TABLE = "table"
+    BLOCKQUOTE = "blockquote"
+    CODE = "code"
+    CONCLUSION = "conclusion"
+    TABLE_OF_CONTENTS = "table_of_contents"
+    VENUE = "venue"
+    SCHEDULE = "schedule"
+    FAQS = "faqs"
+    HISTORY = "history"
+    DATE_SECTION = "date_section"
+    VIDEO = "video"
+    EXTERNAL_LINK = "external_link"
+    INTERNAL_LINK = "internal_link"
 
 
 class Image(BaseModel):
@@ -25,7 +50,7 @@ class Section(BaseModel):
     """A detected section within the article."""
 
     name: str = Field(description="Name of the section (e.g., Introduction, Conclusion).")
-    type: str = Field(description="Type of the section (e.g., introduction, heading, image).")
+    type: SectionType = Field(description="Type of the section (e.g., introduction, heading, image).")
     astra_id: str = Field(description="Unique data-astra-id assigned to this section's root tag.")
     content: str = Field(description="The textual content or raw HTML of this section.")
 

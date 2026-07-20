@@ -40,6 +40,7 @@ def test_groq_provider_generate_success() -> None:
             "model": settings.model,
             "messages": [{"role": "user", "content": "Test prompt"}],
             "temperature": 0.7,
+            "max_tokens": 3000,
         },
     )
 
@@ -55,5 +56,6 @@ def test_groq_provider_generate_no_choices() -> None:
 
     provider = GroqProvider(settings=settings, http_client=mock_client)
 
-    with pytest.raises(RuntimeError, match=r"No choices returned from Groq API\."):
+    from app.domain.ai import AIError
+    with pytest.raises(AIError, match=r"No choices returned from Groq API\."):
         provider.generate("Test prompt")

@@ -995,7 +995,7 @@ class TestUpdatePost:
             "status": "draft",
             "link": "https://example.com/?p=123&preview=true",
         }
-        mock_httpx_client.send.return_value = response
+        mock_httpx_client.request.return_value = response
 
         result = wp_client.update_post(
             post_id=123,
@@ -1009,7 +1009,7 @@ class TestUpdatePost:
         assert result.link == "https://example.com/?p=123&preview=true"
 
         # Verify the request was built with json body
-        call_args = mock_httpx_client.build_request.call_args_list[0]
+        call_args = mock_httpx_client.request.call_args_list[0]
         assert call_args.kwargs["json"]["status"] == "draft"
         assert call_args.kwargs["json"]["title"] == "Updated"
         assert call_args.kwargs["json"]["content"] == "<p>New</p>"
@@ -1032,7 +1032,7 @@ class TestUpdatePost:
         response.status_code = 404
         response.json.return_value = {"message": "Not found"}
         response.reason_phrase = "Not Found"
-        mock_httpx_client.send.return_value = response
+        mock_httpx_client.request.return_value = response
 
         with pytest.raises(APIError):
             wp_client.update_post(post_id=99999, content="<p>Test</p>")
@@ -1047,7 +1047,7 @@ class TestUpdatePost:
         response.status_code = 401
         response.json.return_value = {"message": "Unauthorized"}
         response.reason_phrase = "Unauthorized"
-        mock_httpx_client.send.return_value = response
+        mock_httpx_client.request.return_value = response
 
         with pytest.raises(AuthenticationError):
             wp_client.update_post(post_id=123, content="<p>Test</p>")
@@ -1058,7 +1058,7 @@ class TestUpdatePost:
         mock_httpx_client: MagicMock,
     ) -> None:
         """update_post() should raise TimeoutError on timeout."""
-        mock_httpx_client.send.side_effect = httpx.ReadTimeout("read timed out")
+        mock_httpx_client.request.side_effect = httpx.ReadTimeout("read timed out")
 
         with pytest.raises(TimeoutError):
             wp_client.update_post(post_id=123, content="<p>Test</p>")
@@ -1077,11 +1077,11 @@ class TestUpdatePost:
             "content": {"rendered": "<p>New content</p>"},
             "status": "draft",
         }
-        mock_httpx_client.send.return_value = response
+        mock_httpx_client.request.return_value = response
 
         wp_client.update_post(post_id=123, content="<p>New content</p>")
 
-        call_args = mock_httpx_client.build_request.call_args_list[0]
+        call_args = mock_httpx_client.request.call_args_list[0]
         json_body = call_args.kwargs["json"]
         assert "title" not in json_body
         assert json_body["content"] == "<p>New content</p>"

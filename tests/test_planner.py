@@ -1,173 +1,132 @@
-"""Tests for the Update Planner logic."""
+"""Tests for the Update Planner."""
 
-from __future__ import annotations
+import json
+from unittest.mock import MagicMock
 
-from app.application.planner import build_update_plan
+import pytest
+
+from app.domain.ai import AIProvider, AIError
 from app.domain.article import Article, Section
-from app.domain.plan import AnalysisResult, SectionDecision
+from app.domain.intelligence import ArticleAnalysis, ArticleType, ContentFreshness, UpdateDecision
+from app.domain.plan import UpdatePlan, ActionType
+from app.application.planner import Planner
 
 
-def test_build_update_plan_empty() -> None:
-    """It should return an empty plan if no sections are present."""
-    article = Article(title="No Sections")
-    plan = build_update_plan(article, AnalysisResult())
-    assert len(plan.actions) == 0
+@pytest.fixture
+def mock_ai_provider():
+    return MagicMock(spec=AIProvider)
 
 
-def test_build_update_plan_with_ai_decisions() -> None:
-    """It should use AI section_decisions as the primary source of truth."""
-    article = Article(
-        title="Test Article",
+@pytest.fixture
+def dummy_article():
+    return Article(
+        raw_html="<h1>Dummy Title</h1><p data-astra-id='1'>Event runs in 2024</p>",
+        title="Dummy Title",
         sections=[
-            Section(
-                name="FAQ",
-                type="heading",
-                astra_id="1",
-                content="FAQ content about events in 2025",
-            ),
-            Section(
-                name="History",
-                type="heading",
-                astra_id="2",
-                content="History of ancient civilizations",
-            ),
-            Section(
-                name="Conclusion",
-                type="heading",
-                astra_id="3",
-                content="End of the article",
-            ),
-        ],
+            Section(name="Content", type="paragraph", astra_id="1", content="<p data-astra-id='1'>Event runs in 2024</p>")
+        ]
     )
 
-    analysis = AnalysisResult(
-        weaknesses=["The FAQ section is missing details."],
-        suggestions=["Add more content to the History section."],
-        section_decisions=[
-            SectionDecision(
-                section="FAQ",
-                action="Update",
-                reason="Contains 2025 references.",
-                priority="High",
-                confidence=95,
-            ),
-            SectionDecision(
-                section="History",
-                action="Skip",
-                reason="Evergreen historical content.",
-                priority="Low",
-                confidence=100,
-            ),
-            SectionDecision(
-                section="Conclusion",
-                action="Skip",
-                reason="No outdated content.",
-                priority="Low",
-                confidence=100,
-            ),
-        ],
+
+@pytest.fixture
+def dummy_intelligence():
+    return ArticleAnalysis(
+        article_type=ArticleType.ANNUAL_EVENT,
+        freshness=ContentFreshness.RECURRING_EVENT,
+        decision=UpdateDecision(
+            strategy="Selective",
+            reason="It is an annual event."
+        ),
+        temporal_entities=[],
+        historical_facts=[],
+        event_info=[],
+        structural_analysis=[],
+        risks=[],
     )
 
-    plan = build_update_plan(article, analysis)
 
-    assert len(plan.actions) == 3
-
-    faq_action = next(a for a in plan.actions if a.section == "FAQ")
-    assert faq_action.action == "Update"
-    assert faq_action.priority == "High"
-    assert faq_action.confidence == 95
-
-    history_action = next(a for a in plan.actions if a.section == "History")
-    assert history_action.action == "Skip"
-
-    conclusion_action = next(a for a in plan.actions if a.section == "Conclusion")
-    assert conclusion_action.action == "Skip"
-
-
-def test_build_update_plan_deterministic_fallback() -> None:
-    """When AI omits a section, deterministic rules should detect outdated years."""
-    article = Article(
-        title="Dussehra 2026 Guide",
-        sections=[
-            Section(
-                name="Dates",
-                type="heading",
-                astra_id="1",
-                content="<p>Dussehra falls on October 12, 2025 in the UK.</p>",
-            ),
-            Section(
-                name="History",
-                type="heading",
-                astra_id="2",
-                content="<p>Dussehra celebrates the victory of good over evil.</p>",
-            ),
-        ],
-    )
-
-    # AI returned no section_decisions — planner must fall back to rules
-    analysis = AnalysisResult(
-        weaknesses=["Dates are outdated."],
-        suggestions=["Update to 2026."],
-    )
-
-    plan = build_update_plan(article, analysis)
-
-    assert len(plan.actions) == 2
-
-    dates_action = next(a for a in plan.actions if a.section == "Dates")
-    assert dates_action.action == "Update"
-    assert dates_action.confidence > 0
-
-    history_action = next(a for a in plan.actions if a.section == "History")
-    assert history_action.action == "Skip"
+def test_build_plan_success(mock_ai_provider, dummy_article, dummy_intelligence):
+    """Test that a valid JSON response is parsed into an UpdatePlan."""
+    valid_json = {
+        "new_title": "Dummy Title 2025",
+        "actions": [
+            {
+                "section_id": "1",
+                "section": "Content",
+                "action": "Update",
+                "reason": "Needs new year",
+                "confidence": 0.95,
+                "fields_to_update": ["2024 to 2025"],
+                "fields_to_preserve": [],
+                "forbidden_changes": [],
+                "required_entities": ["2025"],
+                "expected_output": "Updated text"
+            }
+        ]
+    }
+    
+    mock_ai_provider.generate.return_value = f"```json\n{json.dumps(valid_json)}\n```"
+    
+    planner = Planner(ai_provider=mock_ai_provider)
+    result = planner.build_plan(dummy_article, dummy_intelligence)
+    
+    assert isinstance(result, UpdatePlan)
+    assert result.new_title == "Dummy Title 2025"
+    assert len(result.actions) == 1
+    assert result.actions[0].section == "Content"
+    assert result.actions[0].action == ActionType.UPDATE
+    assert result.actions[0].confidence == 0.95
 
 
-def test_build_update_plan_custom_instructions_override() -> None:
-    """Custom instructions should force-update sections the AI marked Skip."""
-    article = Article(
-        title="Test Article",
-        sections=[
-            Section(
-                name="FAQ",
-                type="heading",
-                astra_id="1",
-                content="FAQ content",
-            ),
-        ],
-    )
-
-    analysis = AnalysisResult(
-        section_decisions=[
-            SectionDecision(
-                section="FAQ",
-                action="Skip",
-                reason="Looks fine.",
-                priority="Low",
-                confidence=100,
-            ),
-        ],
-    )
-
-    plan = build_update_plan(
-        article, analysis, custom_instructions="Update everything to 2026"
-    )
-
-    faq_action = next(a for a in plan.actions if a.section == "FAQ")
-    # With custom_instructions and no outdated content detected,
-    # the planner should still force-update since the AI said Skip but user overrides
-    assert faq_action.action in ("Update", "Skip")
+def test_build_plan_empty_sections(mock_ai_provider, dummy_intelligence):
+    """Test that it handles articles with no sections without calling AI."""
+    article_no_sections = Article(raw_html="<p>No astra tags</p>")
+    
+    planner = Planner(ai_provider=mock_ai_provider)
+    result = planner.build_plan(article_no_sections, dummy_intelligence)
+    
+    assert isinstance(result, UpdatePlan)
+    assert not result.actions
+    mock_ai_provider.generate.assert_not_called()
 
 
-def test_build_update_plan_new_title_preserved() -> None:
-    """The new_title from analysis should flow through to the plan."""
-    article = Article(
-        title="Old Title 2025",
-        sections=[
-            Section(name="Intro", type="heading", astra_id="1", content="Content"),
-        ],
-    )
+def test_build_plan_retries_on_invalid_json(mock_ai_provider, dummy_article, dummy_intelligence):
+    valid_json = {
+        "new_title": None,
+        "actions": [
+            {
+                "section_id": "1",
+                "section": "Content",
+                "action": "Skip",
+                "reason": "No changes needed",
+                "confidence": 1.0,
+                "fields_to_update": [],
+                "fields_to_preserve": [],
+                "forbidden_changes": [],
+                "required_entities": [],
+                "expected_output": ""
+            }
+        ]
+    }
+    
+    mock_ai_provider.generate.side_effect = [
+        "Not json",
+        json.dumps(valid_json)
+    ]
+    
+    planner = Planner(ai_provider=mock_ai_provider)
+    result = planner.build_plan(dummy_article, dummy_intelligence)
+    
+    assert result.actions[0].action == ActionType.SKIP
+    assert mock_ai_provider.generate.call_count == 2
 
-    analysis = AnalysisResult(new_title="New Title 2026")
-    plan = build_update_plan(article, analysis)
 
-    assert plan.new_title == "New Title 2026"
+def test_build_plan_exhausts_retries(mock_ai_provider, dummy_article, dummy_intelligence):
+    mock_ai_provider.generate.return_value = "Bad JSON"
+    
+    planner = Planner(ai_provider=mock_ai_provider)
+    
+    with pytest.raises(AIError, match="Failed to generate valid Update Plan"):
+        planner.build_plan(dummy_article, dummy_intelligence)
+        
+    assert mock_ai_provider.generate.call_count == 4

@@ -43,28 +43,37 @@ def parse_html_string(html: str) -> Article:
         lambda tag: tag.name == "h1" or 
         any(c in tag.get("class", []) for c in ["wp-block-post-title", "entry-title", "post-title"])
     )
-    if title_tag and title_tag.text:
-        title = title_tag.text.strip()
-    elif soup.title and soup.title.string:
-        title = soup.title.string.strip()
+    if title_tag:
+        text = title_tag.get_text(" ", strip=True)
+        if text:
+            title = text
+
+    if not title and soup.title and soup.title.string:
+        text = soup.title.string.strip()
+        if text:
+            title = text
 
     # Extract meta description
     meta_description = ""
     meta_tag = soup.find("meta", attrs={"name": "description"})
     if isinstance(meta_tag, Tag) and meta_tag.get("content"):
-        meta_description = str(meta_tag.get("content")).strip()
+        text = str(meta_tag.get("content")).strip()
+        if text:
+            meta_description = text
 
     # Extract headings (h1-h6)
     headings = []
     for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
-        if h.text:
-            headings.append(h.text.strip())
+        text = h.get_text(" ", strip=True)
+        if text:
+            headings.append(text)
 
     # Extract paragraphs
     paragraphs = []
     for p in soup.find_all("p"):
-        if p.text:
-            paragraphs.append(p.text.strip())
+        text = p.get_text(" ", strip=True)
+        if text:
+            paragraphs.append(text)
 
     # Extract images
     images = []
@@ -84,10 +93,11 @@ def parse_html_string(html: str) -> Article:
     for a in soup.find_all("a"):
         href = a.get("href")
         if href:
+            text = a.get_text(" ", strip=True)
             links.append(
                 Link(
                     href=str(href),
-                    text=a.text.strip(),
+                    text=text,
                     title=str(a.get("title", "")),
                 )
             )
@@ -99,16 +109,24 @@ def parse_html_string(html: str) -> Article:
     lists = [str(lst) for lst in soup.find_all(["ul", "ol"])]
 
     # Extract blockquotes
-    blockquotes = [bq.text.strip() for bq in soup.find_all("blockquote") if bq.text]
+    blockquotes = []
+    for bq in soup.find_all("blockquote"):
+        text = bq.get_text(" ", strip=True)
+        if text:
+            blockquotes.append(text)
 
     # Extract code blocks (pre/code)
     code_blocks = []
     for pre in soup.find_all("pre"):
-        code_blocks.append(pre.text.strip())
+        text = pre.get_text("\n", strip=True)
+        if text:
+            code_blocks.append(text)
     # Also grab standalone code tags that are not inside pre
     for code in soup.find_all("code"):
         if code.parent and code.parent.name != "pre":
-            code_blocks.append(code.text.strip())
+            text = code.get_text(" ", strip=True)
+            if text:
+                code_blocks.append(text)
 
     return Article(
         raw_html=html,

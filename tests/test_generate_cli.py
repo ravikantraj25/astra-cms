@@ -42,13 +42,20 @@ def test_generate_html_success(
 
     # Create dummy plan
     plan_data = {
+        "new_title": None,
+        "custom_instructions": None,
         "actions": [
             {
+                "section_id": "1",
                 "section": "Introduction",
-                "reason": "Needs SEO",
-                "priority": "High",
-                "confidence": 90,
                 "action": "Update",
+                "reason": "Needs SEO",
+                "confidence": 0.9,
+                "fields_to_update": ["content"],
+                "fields_to_preserve": [],
+                "forbidden_changes": [],
+                "required_entities": [],
+                "expected_output": "Updated intro"
             }
         ]
     }
@@ -74,7 +81,7 @@ def test_generate_html_success(
             sections=[
                 Section(
                     name="Introduction",
-                    type="Paragraph",
+                    type="paragraph",
                     astra_id="1",
                     content="<p>Original Intro</p>",
                 )

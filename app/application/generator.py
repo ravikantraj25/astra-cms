@@ -16,9 +16,12 @@ from app.application.prompt_builder import build_section_update_prompt, PromptBu
 from app.application.response_validator import validate_ai_response
 from app.domain.ai import AIProvider
 from app.domain.article import Article, Section
-from app.domain.plan import UpdatePlan, UpdateReport, ActionType
+from app.domain.plan import UpdatePlan, UpdateReport, ActionType, SectionDecision
 
 logger = logging.getLogger(__name__)
+
+# Minimum confidence threshold for updating a section
+_MIN_CONFIDENCE = 0.70
 
 
 def sanitize_html(html: str) -> str:
@@ -105,13 +108,13 @@ def generate_updated_article(
         return article.raw_html, report
 
     # Map plan actions by astra_id AND name (for fallback)
-    action_map_by_id: dict[str, tuple[ActionType, str, float]] = {}
-    action_map_by_name: dict[str, tuple[ActionType, str, float]] = {}
+    action_map_by_id: dict[str, SectionDecision] = {}
+    action_map_by_name: dict[str, SectionDecision] = {}
     
     for act in plan.actions:
-        if act.astra_id:
-            action_map_by_id[act.astra_id] = (act.action, act.reason, float(act.confidence))
-        action_map_by_name[act.section] = (act.action, act.reason, float(act.confidence))
+        if act.section_id:
+            action_map_by_id[act.section_id] = act
+        action_map_by_name[act.section] = act
 
     # Parse the HTML that has the data-astra-id tags
     soup = BeautifulSoup(article.raw_html, "html.parser")
@@ -119,18 +122,31 @@ def generate_updated_article(
 
     for section in article.sections:
         # Prefer astra_id match, fallback to name match
-        if section.astra_id in action_map_by_id:
-            action_type, reason, confidence = action_map_by_id[section.astra_id]
-        else:
-            action_type, reason, confidence = action_map_by_name.get(
-                section.name, (ActionType.SKIP, "Not in plan", 100.0)
-            )
+        decision = action_map_by_id.get(section.astra_id)
+        if not decision:
+            decision = action_map_by_name.get(section.name)
+            
+        if not decision:
+            logger.warning("No plan decision found for section %s.", section.name)
+            report.skipped_sections.append(section.name)
+            continue
 
         target_tag = soup.find(attrs={"data-astra-id": section.astra_id})
 
         if not target_tag or not isinstance(target_tag, Tag):
             logger.warning("Target tag for section %s not found in DOM.", section.name)
             report.skipped_sections.append(section.name)
+            continue
+
+        action_type = decision.action
+        confidence = decision.confidence
+
+        # ── Low Confidence Abort ──────────────────────────────────────
+        if action_type == ActionType.UPDATE and confidence < _MIN_CONFIDENCE:
+            msg = f"Aborted update due to low confidence ({confidence} < {_MIN_CONFIDENCE})"
+            logger.warning("Skipping section %s: %s", section.name, msg)
+            report.skipped_sections.append(section.name)
+            report.diagnostics[section.name] = msg
             continue
 
         # ── Skip: leave untouched ─────────────────────────────────────
@@ -144,41 +160,75 @@ def generate_updated_article(
             _record_action(report, section.name, action_type, confidence, applied_confidences)
             continue
 
-        # ── Update: rewrite via AI ────────────────────────────────────
+        # ── Update: rewrite via AI with Retry Loop ────────────────────
         custom_instr = plan.custom_instructions
-        prompt = build_section_update_prompt(section, reason, custom_instr)
+        
+        MAX_RETRIES = 2
+        safe_html = section.content # Fallback to original
+        is_success = False
+        
+        from app.application.section_validator import SectionValidator
+        
+        for attempt in range(MAX_RETRIES + 1):
+            prompt = build_section_update_prompt(section, decision, custom_instr)
+            
+            if attempt > 0:
+                prompt += "\n\nCRITICAL: Validation Failed on your previous attempt!\n"
+                prompt += "You violated the following strict rules:\n"
+                for rule in failed_rules:
+                    prompt += f"- {rule}\n"
+                prompt += "\nPlease fix these errors and regenerate the HTML exactly according to the rules."
+                
+            try:
+                ai_response = ai_provider.generate(prompt)
+                clean_html = validate_ai_response(ai_response)
+                
+                # Run section validation
+                val_result = SectionValidator.validate(section.content, clean_html, decision)
+                
+                if val_result.is_valid:
+                    safe_html = sanitize_html(clean_html)
+                    is_success = True
+                    break
+                else:
+                    failed_rules = val_result.failed_rules
+                    logger.warning(f"Validation failed for section {section.name} (Attempt {attempt+1}): {failed_rules}")
+                    if attempt == MAX_RETRIES:
+                        report.warnings.append(f"Validation failed after {MAX_RETRIES} retries for section {section.name}: {failed_rules}")
+                        report.diagnostics[section.name] = f"Validation failed: {failed_rules}"
 
-        try:
-            ai_response = ai_provider.generate(prompt)
-
-            clean_html = validate_ai_response(ai_response)
-            safe_html = sanitize_html(clean_html)
-            new_soup = BeautifulSoup(safe_html, "html.parser")
-
-            # Preserve original attributes the AI may have stripped
-            is_wrapper = (
-                target_tag.name == "div"
-                and "astra-wrapper" in target_tag.get("class", [])
-            )
-
-            if not is_wrapper:
-                first_tag = next(
-                    (t for t in new_soup.contents if isinstance(t, Tag)),
-                    None,
-                )
-                if first_tag and first_tag.name == target_tag.name:
-                    _restore_attributes(target_tag, first_tag)
-
-            for new_tag in new_soup.contents:
-                target_tag.insert_before(new_tag)
-            target_tag.decompose()
-
-            _record_action(report, section.name, action_type, confidence, applied_confidences)
-
-        except (ValueError, RuntimeError, httpx.HTTPError) as e:
-            logger.error("Failed to generate update for section %s: %s", section.name, e)
-            report.warnings.append(f"Failed to generate update for section {section.name}: {e}")
+            except (ValueError, RuntimeError, httpx.HTTPError) as e:
+                logger.error("Failed to generate update for section %s: %s", section.name, e)
+                if attempt == MAX_RETRIES:
+                    report.warnings.append(f"Failed to generate update for section {section.name}: {e}")
+                    report.diagnostics[section.name] = f"Error during generation: {e}"
+        
+        if not is_success:
+            # If we exhausted retries, we fallback to original and record a skip
             report.skipped_sections.append(section.name)
+            continue
+            
+        new_soup = BeautifulSoup(safe_html, "html.parser")
+
+        # Preserve original attributes the AI may have stripped
+        is_wrapper = (
+            target_tag.name == "div"
+            and "astra-wrapper" in target_tag.get("class", [])
+        )
+
+        if not is_wrapper:
+            first_tag = next(
+                (t for t in new_soup.contents if isinstance(t, Tag)),
+                None,
+            )
+            if first_tag and first_tag.name == target_tag.name:
+                _restore_attributes(target_tag, first_tag)
+
+        for new_tag in new_soup.contents:
+            target_tag.insert_before(new_tag)
+        target_tag.decompose()
+
+        _record_action(report, section.name, action_type, confidence, applied_confidences)
 
     # ── Cleanup ───────────────────────────────────────────────────────────
     for tag in soup.find_all(attrs={"data-astra-id": True}):

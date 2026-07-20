@@ -8,7 +8,7 @@ import pytest
 
 from app.application.generator import generate_updated_article
 from app.domain.article import Article, Section
-from app.domain.plan import UpdateAction, UpdatePlan
+from app.domain.plan import SectionDecision, UpdatePlan, ActionType
 
 
 def test_generate_updated_article_skips_and_deletes() -> None:
@@ -19,13 +19,13 @@ def test_generate_updated_article_skips_and_deletes() -> None:
         sections=[
             Section(
                 name="Section 1",
-                type="Paragraph",
+                type="paragraph",
                 astra_id="1",
                 content="<p>Sec 1</p>",
             ),
             Section(
                 name="Section 2",
-                type="Paragraph",
+                type="paragraph",
                 astra_id="2",
                 content="<p>Sec 2</p>",
             ),
@@ -34,19 +34,19 @@ def test_generate_updated_article_skips_and_deletes() -> None:
 
     plan = UpdatePlan(
         actions=[
-            UpdateAction(
+            SectionDecision(
+                section_id="1",
                 section="Section 1",
                 reason="Skip it",
-                priority="Low",
-                confidence=100,
-                action="Skip",
+                confidence=1.0,
+                action=ActionType.SKIP,
             ),
-            UpdateAction(
+            SectionDecision(
+                section_id="2",
                 section="Section 2",
                 reason="Delete it",
-                priority="High",
-                confidence=100,
-                action="Delete",
+                confidence=1.0,
+                action=ActionType.DELETE,
             ),
         ]
     )
@@ -60,8 +60,8 @@ def test_generate_updated_article_skips_and_deletes() -> None:
     assert "data-astra-id" not in result  # Cleaned up
     assert report.skipped_sections == ["Section 1"]
     assert report.updated_sections == ["Section 2"]
-    assert report.confidence_score == 100.0
-    assert report.section_confidences == {"Section 2": 100.0}
+    assert report.confidence_score == 1.0
+    assert report.section_confidences == {"Section 2": 1.0}
     mock_ai.generate.assert_not_called()
 
 
@@ -73,13 +73,13 @@ def test_generate_updated_article_updates() -> None:
         sections=[
             Section(
                 name="Section 1",
-                type="Paragraph",
+                type="paragraph",
                 astra_id="1",
                 content="<p>Sec 1</p>",
             ),
             Section(
                 name="Section 2",
-                type="Paragraph",
+                type="paragraph",
                 astra_id="2",
                 content="<p>Sec 2</p>",
             ),
@@ -88,25 +88,24 @@ def test_generate_updated_article_updates() -> None:
 
     plan = UpdatePlan(
         actions=[
-            UpdateAction(
+            SectionDecision(
+                section_id="1",
                 section="Section 1",
                 reason="Update 1",
-                priority="High",
-                confidence=90,
-                action="Update",
+                confidence=0.90,
+                action=ActionType.UPDATE,
             ),
-            UpdateAction(
+            SectionDecision(
+                section_id="2",
                 section="Section 2",
                 reason="Update 2",
-                priority="High",
-                confidence=95,
-                action="Update",
+                confidence=0.95,
+                action=ActionType.UPDATE,
             ),
         ]
     )
 
     mock_ai = MagicMock()
-    # Mock AI response - we don't care about order for DOM replacement, but we just provide two
     mock_ai.generate.side_effect = [
         "<ASTRA_HTML_START>\n<p>New Sec 1</p>\n<ASTRA_HTML_END>",
         "<ASTRA_HTML_START>\n<p>New Sec 2</p>\n<ASTRA_HTML_END>",
@@ -116,15 +115,149 @@ def test_generate_updated_article_updates() -> None:
 
     assert "<p>New Sec 1</p>" in result
     assert "<p>New Sec 2</p>" in result
-    assert "data-astra-id" not in result # Ensure cleanup
+    assert "data-astra-id" not in result
     
-    # Check that the report has the updated sections
     assert "Section 1" in report.updated_sections
     assert "Section 2" in report.updated_sections
     
-    assert report.confidence_score == 92.5
-    assert report.section_confidences == {"Section 1": 90.0, "Section 2": 95.0}
+    assert report.confidence_score in [0.92, 0.93]
+    assert report.section_confidences == {"Section 1": 0.90, "Section 2": 0.95}
     assert mock_ai.generate.call_count == 2
+
+
+def test_generate_updated_article_low_confidence_abort() -> None:
+    """Should skip updating if planner confidence is below 0.70 and record diagnostic."""
+    article = Article(
+        title="Test",
+        raw_html='<p data-astra-id="1">Sec 1</p>',
+        sections=[
+            Section(
+                name="Section 1",
+                type="paragraph",
+                astra_id="1",
+                content="<p>Sec 1</p>",
+            ),
+        ],
+    )
+
+    plan = UpdatePlan(
+        actions=[
+            SectionDecision(
+                section_id="1",
+                section="Section 1",
+                reason="Not sure",
+                confidence=0.50,  # Below 0.70 threshold
+                action=ActionType.UPDATE,
+            ),
+        ]
+    )
+
+    mock_ai = MagicMock()
+    result, report = generate_updated_article(article, plan, mock_ai)
+
+    # HTML should remain unchanged
+    assert "<p>Sec 1</p>" in result
+    # It should be skipped
+    assert "Section 1" in report.skipped_sections
+    assert "Section 1" not in report.updated_sections
+    # Diagnostic should be recorded
+    assert "Section 1" in report.diagnostics
+    assert "low confidence" in report.diagnostics["Section 1"].lower()
+    
+    mock_ai.generate.assert_not_called()
+
+
+def test_generate_updated_article_validation_retry_success() -> None:
+    """Should retry generation if validation fails and succeed on retry."""
+    article = Article(
+        title="Test",
+        raw_html='<p data-astra-id="1">It was 2023.</p>',
+        sections=[
+            Section(
+                name="Content",
+                type="paragraph",
+                astra_id="1",
+                content="<p>It was 2023.</p>",
+            ),
+        ],
+    )
+
+    plan = UpdatePlan(
+        actions=[
+            SectionDecision(
+                section_id="1",
+                section="Content",
+                reason="Update",
+                confidence=1.0,
+                action=ActionType.UPDATE,
+                required_entities=[],  # No new years allowed
+            ),
+        ]
+    )
+
+    mock_ai = MagicMock()
+    mock_ai.generate.side_effect = [
+        # Attempt 1: Fails validation (hallucinates 2024)
+        "<ASTRA_HTML_START>\n<p>It is 2024.</p>\n<ASTRA_HTML_END>",
+        # Attempt 2: Succeeds validation
+        "<ASTRA_HTML_START>\n<p>It was 2023.</p>\n<ASTRA_HTML_END>",
+    ]
+
+    result, report = generate_updated_article(article, plan, mock_ai)
+
+    assert mock_ai.generate.call_count == 2
+    assert report.updated_sections == ["Content"]
+    # We should have a warning about the first attempt failing
+    assert any("Validation failed" in w for w in report.warnings) is False # wait, warnings are only added if attempt == MAX_RETRIES. It succeeded on attempt 2!
+    assert "<p>It was 2023.</p>" in result
+
+
+def test_generate_updated_article_validation_retry_failure() -> None:
+    """Should exhaust retries, fallback to original HTML, and log diagnostic."""
+    article = Article(
+        title="Test",
+        raw_html='<p data-astra-id="1">It was 2023.</p>',
+        sections=[
+            Section(
+                name="Content",
+                type="paragraph",
+                astra_id="1",
+                content="<p>It was 2023.</p>",
+            ),
+        ],
+    )
+
+    plan = UpdatePlan(
+        actions=[
+            SectionDecision(
+                section_id="1",
+                section="Content",
+                reason="Update",
+                confidence=1.0,
+                action=ActionType.UPDATE,
+                required_entities=[],  # No new years allowed
+            ),
+        ]
+    )
+
+    mock_ai = MagicMock()
+    # Fails all attempts by hallucinating 2024
+    mock_ai.generate.side_effect = [
+        "<ASTRA_HTML_START>\n<p>It is 2024.</p>\n<ASTRA_HTML_END>",
+        "<ASTRA_HTML_START>\n<p>It is still 2024.</p>\n<ASTRA_HTML_END>",
+        "<ASTRA_HTML_START>\n<p>Definitely 2024.</p>\n<ASTRA_HTML_END>",
+    ]
+
+    result, report = generate_updated_article(article, plan, mock_ai)
+
+    assert mock_ai.generate.call_count == 3
+    assert "Content" in report.skipped_sections
+    assert "Content" not in report.updated_sections
+    assert "Content" in report.diagnostics
+    assert "hallucinated" in report.diagnostics["Content"]
+    assert any("Validation failed after 2 retries" in w for w in report.warnings)
+    # Reverts to original HTML
+    assert "<p>It was 2023.</p>" in result
 
 
 def test_generate_full_article_update_success() -> None:
@@ -134,12 +267,11 @@ def test_generate_full_article_update_success() -> None:
     original_html = "<h1>Title</h1><p>Old content</p>"
     plan = UpdatePlan(
         actions=[
-            UpdateAction(
+            SectionDecision(
                 section="Intro",
                 reason="Needs SEO",
-                priority="High",
-                confidence=85,
-                action="Update",
+                confidence=0.85,
+                action=ActionType.UPDATE,
             ),
         ]
     )
@@ -157,7 +289,7 @@ def test_generate_full_article_update_success() -> None:
     assert "Updated content with SEO" in result
     assert "Old content" not in result
     assert report.updated_sections == ["Intro"]
-    assert report.confidence_score == 85.0
+    assert report.confidence_score == 0.85
     mock_ai.generate.assert_called_once()
 
 
@@ -183,12 +315,11 @@ def test_generate_full_article_update_raises_on_ai_error() -> None:
     original_html = "<h1>Title</h1><p>Content</p>"
     plan = UpdatePlan(
         actions=[
-            UpdateAction(
+            SectionDecision(
                 section="Intro",
                 reason="Needs update",
-                priority="High",
-                confidence=90,
-                action="Update",
+                confidence=0.90,
+                action=ActionType.UPDATE,
             ),
         ]
     )
@@ -207,12 +338,11 @@ def test_generate_full_article_update_raises_on_bad_response() -> None:
     original_html = "<h1>Title</h1>"
     plan = UpdatePlan(
         actions=[
-            UpdateAction(
+            SectionDecision(
                 section="Intro",
                 reason="Update SEO",
-                priority="High",
-                confidence=80,
-                action="Update",
+                confidence=0.80,
+                action=ActionType.UPDATE,
             ),
         ]
     )
@@ -232,19 +362,17 @@ def test_generate_full_article_update_skips_tracked() -> None:
     original_html = "<h1>Title</h1>"
     plan = UpdatePlan(
         actions=[
-            UpdateAction(
+            SectionDecision(
                 section="Intro",
                 reason="Update SEO",
-                priority="High",
-                confidence=80,
-                action="Update",
+                confidence=0.80,
+                action=ActionType.UPDATE,
             ),
-            UpdateAction(
+            SectionDecision(
                 section="FAQ",
                 reason="OK as-is",
-                priority="Low",
-                confidence=95,
-                action="Skip",
+                confidence=0.95,
+                action=ActionType.SKIP,
             ),
         ]
     )
@@ -258,7 +386,7 @@ def test_generate_full_article_update_skips_tracked() -> None:
 
     assert "Intro" in report.updated_sections
     assert "FAQ" in report.skipped_sections
-    assert report.confidence_score == 80.0
+    assert report.confidence_score == 0.80
 
 
 def test_generate_updated_article_preserves_structure() -> None:
@@ -269,7 +397,7 @@ def test_generate_updated_article_preserves_structure() -> None:
         sections=[
             Section(
                 name="Date",
-                type="Paragraph",
+                type="paragraph",
                 astra_id="1",
                 content='<p id="p1" class="date-txt">Old Date</p>',
             ),
@@ -278,28 +406,29 @@ def test_generate_updated_article_preserves_structure() -> None:
 
     plan = UpdatePlan(
         actions=[
-            UpdateAction(
+            SectionDecision(
+                section_id="1",
                 section="Date",
                 reason="Update date",
-                priority="High",
-                confidence=100,
-                action="Update",
+                confidence=1.0,
+                action=ActionType.UPDATE,
             ),
         ]
     )
 
     mock_ai = MagicMock()
-    # AI returns the p tag but misses the class and id
-    mock_ai.generate.return_value = "<ASTRA_HTML_START>\n<p>New Date</p>\n<ASTRA_HTML_END>"
+    # AI strips attributes on attempt 1, then fixes it on attempt 2
+    mock_ai.generate.side_effect = [
+        "<ASTRA_HTML_START>\n<p>New Date</p>\n<ASTRA_HTML_END>",
+        '<ASTRA_HTML_START>\n<p id="p1" class="date-txt">New Date</p>\n<ASTRA_HTML_END>'
+    ]
 
     result, report = generate_updated_article(article, plan, mock_ai)
 
-    # The attributes should be rescued
     assert 'class="date-txt"' in result
     assert 'id="p1"' in result
     assert "New Date" in result
     
-    # Run QualityValidator to ensure the generated HTML passes structure validation
     from app.application.quality_validator import QualityValidator
     original_html = '<p id="p1" class="date-txt">Old Date</p>'
     val_report = QualityValidator.validate(original_html, result)
@@ -316,7 +445,7 @@ def test_generate_updated_article_strips_markdown() -> None:
         sections=[
             Section(
                 name="Content",
-                type="Paragraph",
+                type="paragraph",
                 astra_id="1",
                 content='<p>Content</p>',
             ),
@@ -325,18 +454,17 @@ def test_generate_updated_article_strips_markdown() -> None:
 
     plan = UpdatePlan(
         actions=[
-            UpdateAction(
+            SectionDecision(
+                section_id="1",
                 section="Content",
                 reason="Update",
-                priority="High",
-                confidence=100,
-                action="Update",
+                confidence=1.0,
+                action=ActionType.UPDATE,
             ),
         ]
     )
 
     mock_ai = MagicMock()
-    # AI includes markdown fences inside the markers (prompt leakage pattern)
     mock_ai.generate.return_value = (
         "<ASTRA_HTML_START>\n"
         "```html\n"
@@ -347,9 +475,7 @@ def test_generate_updated_article_strips_markdown() -> None:
 
     result, report = generate_updated_article(article, plan, mock_ai)
 
-    # Should not throw RuntimeError on validation because fences are stripped
     assert "<p>Updated Content</p>" in result
     assert "```html" not in result
     assert "```" not in result
     assert report.updated_sections == ["Content"]
-

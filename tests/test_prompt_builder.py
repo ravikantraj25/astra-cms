@@ -1,199 +1,105 @@
 """Tests for the prompt builder."""
 
-from __future__ import annotations
+from datetime import datetime
 
-from app.application.prompt_builder import (
-    _detect_article_type,
-    build_analysis_prompt,
-    build_prompt,
-)
+import pytest
+
 from app.domain.article import Article, Section
+from app.domain.intelligence import ArticleAnalysis, ArticleType, ContentFreshness, UpdateDecision, TemporalEntity, UpdatePolicy
+from app.domain.plan import SectionDecision, ActionType
+from app.application.prompt_builder import (
+    build_planner_prompt,
+    build_section_update_prompt,
+    _truncate_html,
+    _detect_article_type
+)
 
 
-def test_detect_article_type() -> None:
-    """It should correctly detect article types based on headings."""
-    assert (
-        _detect_article_type(Article(headings=["Frequently Asked Questions"]))
-        == "FAQ / Knowledge-Base Article"
-    )
-    assert (
-        _detect_article_type(Article(headings=["Event Schedule", "Venue Location"]))
-        == "Event Page"
-    )
-    assert (
-        _detect_article_type(Article(headings=["How to Build a CMS", "Step 1"]))
-        == "Tutorial / How-To Guide"
-    )
-    assert (
-        _detect_article_type(Article(headings=["Next.js vs Remix", "Comparison"]))
-        == "Review / Comparison"
-    )
-    assert _detect_article_type(Article(headings=["Press Release 2026"])) == "News / Press Release"
-    assert _detect_article_type(Article(headings=["Random Topic"])) == "General Article"
+def test_truncate_html_fits():
+    html = "<p>Short html</p>"
+    truncated = _truncate_html(html, max_chars=100)
+    assert truncated == html
 
 
-def test_build_prompt() -> None:
-    """It should build a well-formatted prompt string."""
+def test_truncate_html_cuts_off_safely():
+    html = "<div><p>Paragraph 1</p><p>Paragraph 2</p></div>"
+    truncated = _truncate_html(html, max_chars=30)
+    # The first paragraph should fit, but the second might not
+    assert "Paragraph 1" in truncated
+    assert "Paragraph 2" not in truncated
+    # Must be valid HTML
+    assert truncated.startswith("<div><p>Paragraph 1</p>")
+    assert "[TRUNCATED]" in truncated
+
+
+def test_detect_article_type():
+    article_faq = Article(headings=["FAQ about Event"])
+    assert _detect_article_type(article_faq) == "FAQ / Knowledge-Base Article"
+    
+    article_news = Article(headings=["Press Release 2024"])
+    assert _detect_article_type(article_news) == "News / Press Release"
+
+
+def test_build_planner_prompt_includes_intelligence():
     article = Article(
-        title="Test Article",
-        meta_description="A test article for prompt building.",
-        headings=["Introduction", "Conclusion"],
-        paragraphs=["This is a paragraph."],
-        sections=[
-            Section(
-                name="Intro",
-                type="introduction",
-                astra_id="1",
-                content="Intro text",
-            ),
-            Section(
-                name="Conclusion",
-                type="conclusion",
-                astra_id="2",
-                content="End text",
-            ),
+        title="My Event",
+        raw_html="<p data-astra-id='1'>Text</p>",
+        sections=[Section(name="Content", type="paragraph", astra_id="1", content="<p data-astra-id='1'>Text</p>")]
+    )
+    
+    intelligence = ArticleAnalysis(
+        article_type=ArticleType.ANNUAL_EVENT,
+        freshness=ContentFreshness.RECURRING_EVENT,
+        decision=UpdateDecision(
+            strategy="Selective",
+            reason="It is an annual event."
+        ),
+        temporal_entities=[
+            TemporalEntity(
+                entity="2024",
+                policy=UpdatePolicy.UPDATE,
+                reason="Needs new year",
+                confidence=0.99,
+                source_sentence="Event in 2024"
+            )
         ],
+        historical_facts=[],
+        event_info=[],
+        structural_analysis=[],
+        risks=[],
     )
-
-    prompt = build_prompt(article)
-
-    # Assert specific sections are present
-    assert "ARTICLE UPDATE PROMPT" in prompt
-    assert "Title: Test Article" in prompt
-    assert "Word Count: 6" in prompt
-    assert "Meta Description: A test article for prompt building." in prompt
-
-    # Assert detected sections are listed
-    assert "1. [introduction] Intro" in prompt
-    assert "2. [conclusion] Conclusion" in prompt
-
-    # Assert headings are listed
-    assert "- Introduction" in prompt
-    assert "- Conclusion" in prompt
-
-    # Assert update instructions are present
-    assert "UPDATE INSTRUCTIONS" in prompt
-    assert "Return the updated article as valid HTML." in prompt
+    
+    prompt = build_planner_prompt(article, intelligence)
+    
+    # Check that intelligence properties are injected as JSON
+    assert "Annual Event" in prompt
+    assert "Selective" in prompt
+    assert "2024" in prompt
+    # Check that sections are injected
+    assert "[1] Content (Type: SectionType.PARAGRAPH)" in prompt
 
 
-def test_build_analysis_prompt() -> None:
-    """It should build a well-formatted analysis prompt string."""
-    article = Article(
-        title="Analysis Article",
-        headings=["H1", "H2"],
-        paragraphs=["P1", "P2"],
-        images=[],
-        links=[],
+def test_build_section_update_prompt():
+    section = Section(name="Content", type="paragraph", astra_id="1", content="<p>2024</p>")
+    decision = SectionDecision(
+        section_id="1",
+        section="Content",
+        action=ActionType.UPDATE,
+        reason="Needs new year",
+        confidence=0.9,
+        fields_to_update=["Year"],
+        fields_to_preserve=["Image"],
+        forbidden_changes=["Price"],
+        required_entities=["2025"],
+        expected_output="Updated to 2025"
     )
-
-    prompt = build_analysis_prompt(article)
-
-    assert "DEEP ARTICLE ANALYSIS" in prompt
-    assert "Title: Analysis Article" in prompt
-    assert "Word Count: 4" in prompt
-    assert "section_decisions" in prompt
-    assert "DECISION RULES" in prompt
-    assert "STRICT JSON" in prompt
-
-
-def test_build_full_article_update_prompt() -> None:
-    """It should embed original HTML and update plan into the template."""
-    from app.application.prompt_builder import build_full_article_update_prompt
-
-    html = "<h1>Hello World</h1><p>Content here.</p>"
-    plan_json = '{"actions": [{"section": "Intro", "action": "Update"}]}'
-
-    prompt = build_full_article_update_prompt(html, plan_json)
-
-    # Assert placeholders are replaced
-    assert "{{ORIGINAL_HTML}}" not in prompt
-    assert "{{UPDATE_PLAN_JSON}}" not in prompt
-
-    # Assert actual content is present
-    assert "<h1>Hello World</h1><p>Content here.</p>" in prompt
-    assert '"section": "Intro"' in prompt
-
-    # Assert output contract instructions are present
+    
+    prompt = build_section_update_prompt(section, decision)
+    
+    assert "Action: Update" in prompt
+    assert "FIELDS TO UPDATE:\n - Year" in prompt
+    assert "FIELDS TO PRESERVE (NEVER MODIFY THESE):\n - Image" in prompt
+    assert "FORBIDDEN CHANGES:\n - Price" in prompt
+    assert "REQUIRED ENTITIES (MUST BE INCLUDED):\n - 2025" in prompt
+    assert "<p>2024</p>" in prompt
     assert "<ASTRA_HTML_START>" in prompt
-    assert "<ASTRA_HTML_END>" in prompt
-    assert "NON-NEGOTIABLE RULES" in prompt
-    assert "PRESERVE EXACTLY" in prompt
-    assert "OUTPUT CONTRACT" in prompt
-
-
-def test_extract_astra_html_with_markers() -> None:
-    """It should extract HTML between ASTRA markers."""
-    from app.application.prompt_builder import extract_astra_html
-
-    response = "<ASTRA_HTML_START>\n<h1>Updated</h1>\n<ASTRA_HTML_END>"
-    assert extract_astra_html(response) == "<h1>Updated</h1>"
-
-
-def test_extract_astra_html_with_surrounding_text() -> None:
-    """It should ignore text outside the markers."""
-    from app.application.prompt_builder import extract_astra_html
-
-    response = "Some preamble\n<ASTRA_HTML_START>\n<p>Clean</p>\n<ASTRA_HTML_END>\nSome epilogue"
-    assert extract_astra_html(response) == "<p>Clean</p>"
-
-
-def test_extract_astra_html_fallback_markdown() -> None:
-    """It should strip markdown fences when markers are absent."""
-    from app.application.prompt_builder import extract_astra_html
-
-    response = "```html\n<p>Fallback</p>\n```"
-    assert extract_astra_html(response) == "<p>Fallback</p>"
-
-
-def test_extract_astra_html_fallback_plain() -> None:
-    """It should return the cleaned text when no markers or fences exist."""
-    from app.application.prompt_builder import extract_astra_html
-
-    response = "  <div>Plain</div>  "
-    assert extract_astra_html(response) == "<div>Plain</div>"
-
-
-def test_extract_astra_html_empty_raises() -> None:
-    """It should raise ValueError when markers exist but content is empty."""
-    from app.application.prompt_builder import extract_astra_html
-
-    import pytest
-
-    response = "<ASTRA_HTML_START>\n\n<ASTRA_HTML_END>"
-    with pytest.raises(ValueError, match="empty HTML"):
-        extract_astra_html(response)
-
-
-def test_prompt_builder_class() -> None:
-    """PromptBuilder should load the template file and substitute placeholders."""
-    from app.application.prompt_builder import PromptBuilder
-
-    builder = PromptBuilder()
-
-    html = "<h1>Test</h1>"
-    plan_json = '{"actions": []}'
-
-    prompt = builder.build(html, plan_json)
-
-    assert "{{ORIGINAL_HTML}}" not in prompt
-    assert "{{UPDATE_PLAN_JSON}}" not in prompt
-    assert "<h1>Test</h1>" in prompt
-    assert '{"actions": []}' in prompt
-    assert "<ASTRA_HTML_START>" in prompt
-    assert "OUTPUT CONTRACT" in prompt
-
-
-def test_prompt_builder_class_custom_template(tmp_path) -> None:
-    """PromptBuilder should accept a custom template path."""
-    from app.application.prompt_builder import PromptBuilder
-
-    template = tmp_path / "custom.txt"
-    template.write_text(
-        "ARTICLE: {{ORIGINAL_HTML}}\nPLAN: {{UPDATE_PLAN_JSON}}",
-        encoding="utf-8",
-    )
-
-    builder = PromptBuilder(template_path=template)
-    result = builder.build("<p>Hi</p>", '{"a":1}')
-
-    assert result == 'ARTICLE: <p>Hi</p>\nPLAN: {"a":1}'

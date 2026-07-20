@@ -9,14 +9,27 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import HttpUrl, SecretStr, model_validator
+from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.shared.constants import DEFAULT_LOG_LEVEL
 from app.shared.types import Environment
 
+_VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
-class WordPressSettings(BaseSettings):
+
+class AstraBaseSettings(BaseSettings):
+    """Base class providing shared SettingsConfigDict configuration."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+
+class WordPressSettings(AstraBaseSettings):
     """WordPress connection settings.
 
     Loaded from environment variables prefixed with ``WP_``.
@@ -26,18 +39,14 @@ class WordPressSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="WP_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
+        **dict(AstraBaseSettings.model_config, env_prefix="WP_")
     )
 
     base_url: str = ""
     username: str = ""
     app_password: SecretStr = SecretStr("")
-    timeout_connect: float = 10.0
-    timeout_read: float = 30.0
+    timeout_connect: float = Field(default=10.0, gt=0.0)
+    timeout_read: float = Field(default=30.0, gt=0.0)
     verify_ssl: bool = True
 
     @model_validator(mode="after")
@@ -56,7 +65,7 @@ class WordPressSettings(BaseSettings):
         return bool(self.base_url and self.username and self.app_password.get_secret_value())
 
 
-class AppSettings(BaseSettings):
+class AppSettings(AstraBaseSettings):
     """Root application settings.
 
     Values are loaded from environment variables prefixed with ``ASTRA_`` and
@@ -64,11 +73,7 @@ class AppSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="ASTRA_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
+        **dict(AstraBaseSettings.model_config, env_prefix="ASTRA_")
     )
 
     # ── General ──────────────────────────────────────────────────────────
@@ -78,6 +83,14 @@ class AppSettings(BaseSettings):
 
     # ── Paths ────────────────────────────────────────────────────────────
     base_dir: Path = Path.cwd()
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _validate_log_level(cls, v: str) -> str:
+        v_upper = str(v).upper()
+        if v_upper not in _VALID_LOG_LEVELS:
+            raise ValueError(f"Invalid log_level '{v}'. Must be one of {_VALID_LOG_LEVELS}")
+        return v_upper
 
     @property
     def is_production(self) -> bool:
@@ -110,23 +123,29 @@ def get_wp_settings() -> WordPressSettings:
     return WordPressSettings()
 
 
-class GroqSettings(BaseSettings):
+class GroqSettings(AstraBaseSettings):
     """Groq API settings.
 
     Loaded from environment variables prefixed with ``GROQ_``.
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="GROQ_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
+        **dict(AstraBaseSettings.model_config, env_prefix="GROQ_")
     )
 
     api_key: SecretStr = SecretStr("")
-    model: str = "llama3-8b-8192"
+    model: str = "llama-3.1-8b-instant"
     base_url: str = "https://api.groq.com/openai/v1"
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(default=3000, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_base_url(self) -> GroqSettings:
+        """Validate that ``base_url`` is a proper HTTP(S) URL when provided."""
+        if self.base_url:
+            parsed = HttpUrl(self.base_url)
+            self.base_url = str(parsed).rstrip("/")
+        return self
 
     @property
     def is_configured(self) -> bool:

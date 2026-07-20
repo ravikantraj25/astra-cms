@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from app.application.workflow import run_analysis_workflow
 from app.infrastructure.wordpress.client import WordPressClient
-from app.domain.ai import AIProvider
+from app.domain.ai import AIProvider, AIError
 from app.infrastructure.wordpress.models import WPPost
 
 class MockProvider(AIProvider):
@@ -25,24 +25,29 @@ def test_workflow_json_retry_success(tmp_path: Path):
     mock_post = MagicMock(spec=WPPost)
     mock_post.id = 1
     mock_post.title = "Test"
-    mock_post.content_html = "<h1>Test</h1>"
+    mock_post.content_html = "<h1>Test</h1><h2>History</h2><p>Test</p>"
     
     mock_detail = MagicMock()
     mock_detail.post = mock_post
     wp_client.get_post.return_value = mock_detail
 
-    # First two responses are invalid JSON, third is valid
+    valid_intel = '{"article_type": "News", "freshness": "Breaking News", "decision": {"strategy": "Selective", "reason": "test"}, "temporal_entities": [], "historical_facts": [], "event_info": [], "structural_analysis": [], "risks": []}'
+    valid_plan = '{"new_title": null, "actions": []}'
+    
+    # First two responses are invalid JSON, third is valid intel, fourth is valid plan
     responses = [
         "Not JSON at all",
         "Still not JSON",
-        '{"strengths": ["a"], "weaknesses": ["b"], "suggestions": ["c"], "confidence_scores": {"Test": 100}}'
+        valid_intel,
+        valid_plan
     ]
     ai_provider = MockProvider(responses)
 
     artifacts = run_analysis_workflow(1, wp_client, ai_provider, tmp_path)
     
-    assert ai_provider.calls == 3
-    assert "analysis" in artifacts
+    assert ai_provider.calls == 4
+    assert "intelligence" in artifacts
+    assert "plan" in artifacts
 
 def test_workflow_json_retry_failure(tmp_path: Path):
     wp_client = MagicMock(spec=WordPressClient)
@@ -57,11 +62,11 @@ def test_workflow_json_retry_failure(tmp_path: Path):
     mock_detail.post = mock_post
     wp_client.get_post.return_value = mock_detail
 
-    # All three responses are invalid JSON
-    responses = ["Invalid 1", "Invalid 2", "Invalid 3"]
+    # All 4 responses are invalid JSON (attempt + 3 retries)
+    responses = ["Invalid 1", "Invalid 2", "Invalid 3", "Invalid 4"]
     ai_provider = MockProvider(responses)
 
-    with pytest.raises(ValueError, match="AI failed to return valid JSON"):
+    with pytest.raises(AIError, match="Failed to generate valid Content Intelligence"):
         run_analysis_workflow(1, wp_client, ai_provider, tmp_path)
     
-    assert ai_provider.calls == 3
+    assert ai_provider.calls == 4

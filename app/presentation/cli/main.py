@@ -279,9 +279,10 @@ def analyze_article_ai(
     """Analyze an HTML file using Groq AI and save JSON output."""
     import json
 
-    from app.application.prompt_builder import build_analysis_prompt
+    from app.application.intelligence_prompt import build_intelligence_prompt
     from app.infrastructure.config.settings import get_groq_settings
     from app.infrastructure.providers.groq_provider import GroqProvider
+    from bs4 import BeautifulSoup
 
     try:
         article = parse_html_file(file_path)
@@ -298,7 +299,9 @@ def analyze_article_ai(
     console.print()
     console.print(f"  [dim]Analyzing[/dim] [cyan]{file_path}[/cyan] [dim]with Groq AI...[/dim]")
 
-    prompt = build_analysis_prompt(article)
+    soup = BeautifulSoup(article.raw_html, "html.parser")
+    article_text = soup.get_text(separator="\n", strip=True)
+    prompt = build_intelligence_prompt(article_text)
     provider = GroqProvider(settings)
 
     try:
@@ -378,9 +381,10 @@ def generate_plan(
 ) -> None:
     """Generate an Update Plan from an article and its AI analysis."""
     import json
-
-    from app.application.planner import build_update_plan
+    from app.application.planner import Planner
     from app.application.section_detector import detect_sections
+    from app.infrastructure.config.settings import get_groq_settings
+    from app.infrastructure.providers.groq_provider import GroqProvider
 
     try:
         analysis_data = json.loads(analysis_path.read_text(encoding="utf-8"))
@@ -408,17 +412,29 @@ def generate_plan(
         console.print(f"  [red]✘ File not found:[/red] [dim]{article_path}[/dim]")
         raise typer.Exit(code=1) from err
 
-    from app.domain.plan import AnalysisResult
+    from app.domain.intelligence import ArticleAnalysis
 
     article = detect_sections(article)
 
     try:
-        analysis = AnalysisResult.model_validate(analysis_data)
+        analysis = ArticleAnalysis.model_validate(analysis_data)
     except Exception as err:
         console.print(f"  [red]✘ Invalid Analysis Schema:[/red] {err}")
         raise typer.Exit(code=1) from err
 
-    plan = build_update_plan(article, analysis)
+    settings = get_groq_settings()
+    if not settings.is_configured:
+        console.print("  [red]✘ Groq API key is not configured.[/red]")
+        raise typer.Exit(code=1)
+        
+    provider = GroqProvider(settings)
+    planner = Planner(ai_provider=provider)
+    
+    try:
+        plan = planner.build_plan(article, analysis)
+    except Exception as err:
+        console.print(f"  [red]✘ AI Generation failed:[/red] {err}")
+        raise typer.Exit(code=1) from err
 
     output_dir = analysis_path.parent
     output_file = output_dir / "update_plan.json"

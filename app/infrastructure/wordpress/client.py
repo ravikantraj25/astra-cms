@@ -24,6 +24,9 @@ Usage::
 
 from __future__ import annotations
 
+import random
+import time
+
 import httpx
 
 from app.infrastructure.logging.logger import get_logger
@@ -51,9 +54,15 @@ logger = get_logger("wordpress.client")
 _WP_JSON_PATH: str = "/wp-json"
 _WP_V2_PATH: str = f"{_WP_JSON_PATH}/wp/v2"
 
+# Post statuses
+STATUS_DRAFT: str = "draft"
+STATUS_PUBLISH: str = "publish"
+
 # Default timeouts (seconds)
 _DEFAULT_CONNECT_TIMEOUT: float = 10.0
 _DEFAULT_READ_TIMEOUT: float = 30.0
+
+_MAX_RETRIES: int = 3
 
 
 class WordPressClient:
@@ -199,7 +208,7 @@ class WordPressClient:
         per_page: int = 10,
         page: int = 1,
         search: str = "",
-        status: str = "publish",
+        status: str = STATUS_PUBLISH,
     ) -> WPPostList:
         """Fetch posts from the WordPress REST API.
 
@@ -295,7 +304,7 @@ class WordPressClient:
         post_id: int,
         title: str | None = None,
         content: str | None = None,
-        status: str = "draft",
+        status: str = STATUS_DRAFT,
     ) -> WPPost:
         """Update a WordPress post, defaulting to draft status.
 
@@ -318,10 +327,10 @@ class WordPressClient:
             AuthenticationError: If credentials are invalid.
             WordPressError: On any other API or network failure.
         """
-        if status != "draft":
+        if status != STATUS_DRAFT:
             msg = (
                 f"Refusing to update post {post_id} with status "
-                f'"{status}". Only "draft" is allowed.'
+                f'"{status}". Only "{STATUS_DRAFT}" is allowed.'
             )
             raise ValueError(msg)
 
@@ -331,89 +340,9 @@ class WordPressClient:
         if content is not None:
             body["content"] = content
 
-        # Deep Diagnostics for Publisher
-        print("\n--- DEEP DIAGNOSTICS: PUBLISHER START ---")
-        client = self._ensure_connected()
-        endpoint = f"{self._base_url}{_WP_V2_PATH}/posts/{post_id}"
-        
-        # Build the request to get actual headers
-        req = client.build_request("POST", endpoint, json=body)
-        
-        # 1. Print request details
-        print(f"REST endpoint: {endpoint}")
-        print(f"HTTP method: POST")
-        print(f"Post ID: {post_id}")
-        print(f"Authenticated username: {self._username}")
-        
-        # Mask Authorization
-        headers_dict = dict(req.headers)
-        if "authorization" in headers_dict:
-            headers_dict["authorization"] = "MASKED"
-        print(f"Request headers: {headers_dict}")
-        
-        # Truncate content
-        content_trunc = content[:200] + "..." if content and len(content) > 200 else content
-        diag_body = dict(body)
-        if "content" in diag_body:
-            diag_body["content"] = content_trunc
-        print(f"JSON payload: {diag_body}")
-        
-        # 2. Call GET /users/me
-        print("\n--- DIAGNOSTICS: FETCHING /users/me ---")
-        try:
-            me_req = client.build_request("GET", f"{self._base_url}{_WP_V2_PATH}/users/me")
-            me_resp = client.send(me_req)
-            if me_resp.is_success:
-                me_data = me_resp.json()
-                print(f"ID: {me_data.get('id')}")
-                print(f"username: {me_data.get('slug')}")
-                print(f"name: {me_data.get('name')}")
-                print(f"roles: {me_data.get('roles')}")
-                print(f"capabilities: {me_data.get('capabilities')}")
-            else:
-                print(f"Failed to fetch /users/me: {me_resp.status_code} - {me_resp.text}")
-        except Exception as e:
-            print(f"Error fetching /users/me: {e}")
-            
-        print("--- DEEP DIAGNOSTICS: END PRE-FLIGHT ---\n")
+        logger.debug("Updating post %d with payload keys: %s", post_id, list(body.keys()))
 
-        try:
-            # We send the request manually to catch the raw response
-            response = client.send(req)
-            self._check_response_status(response)
-            data = self._parse_json(response)
-        except httpx.TimeoutException as exc:
-            logger.error("Request timed out: POST %s", req.url)
-            raise TimeoutError(
-                message=f"Request timed out: POST {req.url}",
-            ) from exc
-        except httpx.ConnectError as exc:
-            logger.error("Connection failed: %s", exc)
-            raise ConnectionError(
-                message=f"Could not connect to {self._base_url}: {exc}",
-            ) from exc
-        except httpx.HTTPError as exc:
-            logger.error("HTTP error: %s", exc)
-            raise ConnectionError(
-                message=f"Network error: {exc}",
-            ) from exc
-        except Exception as e:
-            # 3. If request fails
-            print("\n--- DEEP DIAGNOSTICS: PUBLISH FAILED ---")
-            if 'response' in locals() and hasattr(response, 'status_code'):
-                print(f"HTTP status: {response.status_code}")
-                print(f"Full response body: {response.text}")
-                try:
-                    err_json = response.json()
-                    print(f"Parsed JSON error code: {err_json.get('code')}")
-                    print(f"Parsed JSON error message: {err_json.get('message')}")
-                except Exception:
-                    print("Failed to parse JSON error.")
-            else:
-                print("No response object available.")
-            print("------------------------------------------\n")
-            raise
-
+        data = self._request("POST", f"{_WP_V2_PATH}/posts/{post_id}", json_body=body)
         return WPPost.from_api_response(data)
 
     # ── Private helpers ──────────────────────────────────────────────────────
@@ -480,27 +409,63 @@ class WordPressClient:
             TimeoutError: When the request times out.
         """
         client = self._ensure_connected()
+        attempt = 1
+        delay = 1.0
 
-        try:
-            response = client.request(method, path, params=params, json=json_body)
-        except httpx.TimeoutException as exc:
-            logger.error("Request timed out: %s %s", method, path)
-            raise TimeoutError(
-                message=f"Request timed out: {method} {path}",
-            ) from exc
-        except httpx.ConnectError as exc:
-            logger.error("Connection failed: %s", exc)
-            raise ConnectionError(
-                message=f"Could not connect to {self._base_url}: {exc}",
-            ) from exc
-        except httpx.HTTPError as exc:
-            logger.error("HTTP error: %s", exc)
-            raise ConnectionError(
-                message=f"Network error: {exc}",
-            ) from exc
-
-        self._check_response_status(response)
-        return response
+        while True:
+            try:
+                response = client.request(method, path, params=params, json=json_body)
+                
+                if response.status_code in (502, 503, 504) and attempt < _MAX_RETRIES:
+                    sleep_time = delay + random.uniform(0, 0.5)
+                    logger.warning(
+                        "HTTP %d received for %s %s. Retrying in %.2f seconds...", 
+                        response.status_code, method, path, sleep_time
+                    )
+                    time.sleep(sleep_time)
+                    attempt += 1
+                    delay *= 2.0
+                    continue
+                    
+                self._check_response_status(response)
+                return response
+                
+            except httpx.HTTPError as exc:
+                is_transient = isinstance(
+                    exc,
+                    (
+                        httpx.TimeoutException,
+                        httpx.ConnectError,
+                        httpx.ReadError,
+                        httpx.RemoteProtocolError,
+                    ),
+                )
+                if is_transient and attempt < _MAX_RETRIES:
+                    sleep_time = delay + random.uniform(0, 0.5)
+                    logger.warning(
+                        "Network error (%s) for %s %s. Retrying in %.2f seconds...", 
+                        type(exc).__name__, method, path, sleep_time
+                    )
+                    time.sleep(sleep_time)
+                    attempt += 1
+                    delay *= 2.0
+                    continue
+                
+                if isinstance(exc, httpx.TimeoutException):
+                    logger.error("Request timed out: %s %s", method, path)
+                    raise TimeoutError(
+                        message=f"Request timed out: {method} {path}",
+                    ) from exc
+                elif isinstance(exc, httpx.ConnectError):
+                    logger.error("Connection failed: %s", exc)
+                    raise ConnectionError(
+                        message=f"Could not connect to {self._base_url}: {exc}",
+                    ) from exc
+                else:
+                    logger.error("HTTP error: %s", exc)
+                    raise ConnectionError(
+                        message=f"Network error: {exc}",
+                    ) from exc
 
     def _check_response_status(self, response: httpx.Response) -> None:
         """Validate the HTTP response status and raise on errors.

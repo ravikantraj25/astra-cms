@@ -25,7 +25,19 @@ def test_analyze_ai_success(
     file_path = tmp_path / "post_test.html"
     file_path.write_text("<h1>Test</h1>", encoding="utf-8")
 
-    mock_json = json.dumps({"seo_score": 90, "readability_score": 80})
+    mock_json = json.dumps({
+        "article_type": "Annual Event",
+        "freshness": "Recurring Event",
+        "decision": {
+            "strategy": "Selective",
+            "reason": "Because it's an annual event."
+        },
+        "temporal_entities": [],
+        "historical_facts": [],
+        "event_info": [],
+        "structural_analysis": [],
+        "risks": []
+    })
 
     with (
         patch("app.infrastructure.config.settings.get_groq_settings") as mock_settings,
@@ -40,14 +52,12 @@ def test_analyze_ai_success(
 
         assert result.exit_code == 0
         assert "Success" in result.output
-        assert "90" in result.output
-        assert "80" in result.output
 
         output_file = tmp_path / "output" / "analysis.json"
         assert output_file.exists()
 
         saved_json = json.loads(output_file.read_text(encoding="utf-8"))
-        assert saved_json["seo_score"] == 90
+        assert saved_json["article_type"] == "Annual Event"
 
 
 def test_analyze_ai_not_configured(cli_runner: CliRunner, tmp_path: Path) -> None:

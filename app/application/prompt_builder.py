@@ -11,9 +11,58 @@ from pathlib import Path
 from bs4 import BeautifulSoup, Tag, NavigableString, Comment
 
 from app.domain.article import Article, Section
+from app.domain.intelligence import ArticleAnalysis
+from app.domain.plan import SectionDecision
 
 # Path to the directory containing prompt template files.
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+
+
+def build_planner_prompt(
+    article: Article,
+    intelligence: ArticleAnalysis,
+    custom_instructions: str | None = None,
+) -> str:
+    """Build an AI prompt for the Planner."""
+    lines: list[str] = []
+    lines.append("=" * 60)
+    lines.append("PLANNER PROMPT")
+    lines.append("=" * 60)
+    lines.append("")
+    lines.append(f"Title: {article.title}")
+    lines.append("")
+    lines.append("-" * 60)
+    lines.append("CONTENT INTELLIGENCE")
+    lines.append("-" * 60)
+    lines.append(intelligence.model_dump_json(indent=2))
+    lines.append("")
+    lines.append("-" * 60)
+    lines.append("SECTIONS TO PLAN")
+    lines.append("-" * 60)
+    for s in article.sections:
+        lines.append(f"[{s.astra_id}] {s.name} (Type: {s.type})")
+        
+    lines.append("")
+    lines.append("OUTPUT JSON:")
+    lines.append("{")
+    lines.append('  "new_title": "string or null",')
+    lines.append('  "custom_instructions": "string or null",')
+    lines.append('  "actions": [')
+    lines.append("    {")
+    lines.append('      "section_id": "string",')
+    lines.append('      "section": "string",')
+    lines.append('      "action": "Update",')
+    lines.append('      "reason": "string",')
+    lines.append('      "confidence": 0.9,')
+    lines.append('      "fields_to_update": ["string"],')
+    lines.append('      "fields_to_preserve": ["string"],')
+    lines.append('      "forbidden_changes": ["string"],')
+    lines.append('      "required_entities": ["string"],')
+    lines.append('      "expected_output": "string"')
+    lines.append("    }")
+    lines.append("  ]")
+    lines.append("}")
+    return "\n".join(lines)
 
 
 def _get_current_year() -> int:
@@ -350,21 +399,14 @@ def build_prompt(article: Article) -> str:
 # ── Section update prompt ────────────────────────────────────────────────────
 
 
+from app.domain.plan import SectionDecision
+
 def build_section_update_prompt(
     section: Section,
-    reason: str,
+    decision: SectionDecision,
     custom_instructions: str | None = None,
 ) -> str:
-    """Build an AI prompt for rewriting a specific section.
-
-    Args:
-        section: The section to update.
-        reason: The reason this section needs an update.
-        custom_instructions: Optional instructions to force specific updates.
-
-    Returns:
-        A formatted prompt string for generating updated section HTML.
-    """
+    """Build an AI prompt for rewriting a specific section."""
     lines: list[str] = []
     lines.append("=" * 60)
     lines.append("SECTION UPDATE PROMPT")
@@ -372,9 +414,37 @@ def build_section_update_prompt(
     lines.append("")
     lines.append(f"Section Name: {section.name}")
     lines.append(f"Section Type: {section.type}")
-    lines.append(f"Update Reason: {reason}")
-    if custom_instructions:
-        lines.append(f"Custom Instructions: {custom_instructions}")
+    lines.append("")
+    
+    # Inject Planner Execution Directives
+    lines.append("-" * 60)
+    lines.append("PLANNER DIRECTIVES (YOU MUST FOLLOW THESE EXACTLY)")
+    lines.append("-" * 60)
+    lines.append(f"Action: {decision.action.value}")
+    lines.append(f"Reason for Update: {decision.reason}")
+    lines.append(f"Expected Output: {decision.expected_output}")
+    lines.append("")
+    
+    if decision.fields_to_update:
+        lines.append("FIELDS TO UPDATE:")
+        for field in decision.fields_to_update:
+            lines.append(f" - {field}")
+            
+    if decision.fields_to_preserve:
+        lines.append("FIELDS TO PRESERVE (NEVER MODIFY THESE):")
+        for field in decision.fields_to_preserve:
+            lines.append(f" - {field}")
+            
+    if decision.forbidden_changes:
+        lines.append("FORBIDDEN CHANGES:")
+        for field in decision.forbidden_changes:
+            lines.append(f" - {field}")
+            
+    if decision.required_entities:
+        lines.append("REQUIRED ENTITIES (MUST BE INCLUDED):")
+        for field in decision.required_entities:
+            lines.append(f" - {field}")
+            
     lines.append("")
     lines.append("-" * 60)
     lines.append("ORIGINAL HTML")
@@ -386,24 +456,21 @@ def build_section_update_prompt(
     lines.append("UPDATE INSTRUCTIONS")
     lines.append("-" * 60)
     lines.append("")
-    lines.append("Please rewrite and improve the HTML section above based on the Update Reason.")
+    lines.append("Please rewrite and improve the HTML section above by executing the PLANNER DIRECTIVES.")
     if custom_instructions:
         lines.append(f"CRITICAL REQUIREMENT FROM USER: {custom_instructions}")
-    lines.append("You MUST adhere strictly to the following rules:")
+    lines.append("You MUST adhere strictly to the following hard rules:")
     lines.append("")
-    lines.append("1. CRITICAL: Preserve all images (<img> tags) exactly as they are.")
-    lines.append("2. CRITICAL: Preserve all tables (<table>, <tr>, <td>) structure and formatting.")
-    lines.append("3. CRITICAL: Preserve all links (<a> tags) and their exact href attributes.")
-    lines.append("4. CRITICAL: Preserve all HTML schema, attributes, IDs, and CSS classes exactly.")
-    lines.append("5. CRITICAL: Preserve all Gutenberg comments (<!-- wp:... --> and <!-- /wp:... -->) exactly.")
-    lines.append("6. CRITICAL: Preserve the exact nesting, wrappers, and structure of all elements.")
-    lines.append("7. CRITICAL: Do NOT modify image src or srcset URLs.")
-    lines.append("8. Detect and update any outdated information (dates, statistics, obsolete details).")
-    lines.append("9. Preserve evergreen content and timeless definitions without modification.")
-    lines.append("10. Update only what needs changes based on the reason; avoid unnecessary rewrites.")
-    lines.append("11. Maintain consistent tone, voice, and formatting across the section.")
-    lines.append("12. Improve clarity and readability of the text while keeping accurate parts unchanged.")
-    lines.append("13. Do NOT add new sections or extraneous wrapper tags (no <html>, <body>, etc).")
+    lines.append("1. CRITICAL: Never modify historical facts.")
+    lines.append("2. CRITICAL: Never modify image tags (<img> tags). Preserve them exactly as they are.")
+    lines.append("3. CRITICAL: Never modify links (<a> tags). Preserve them exactly as they are.")
+    lines.append("4. CRITICAL: Never modify HTML schema, attributes, IDs, and CSS classes exactly.")
+    lines.append("5. CRITICAL: Never invent event dates. Only use dates provided by the Planner.")
+    lines.append("6. CRITICAL: Never invent prices. Only use prices provided by the Planner.")
+    lines.append("7. CRITICAL: Preserve all tables (<table>, <tr>, <td>) structure and formatting.")
+    lines.append("8. CRITICAL: Preserve all Gutenberg comments (<!-- wp:... --> and <!-- /wp:... -->) exactly.")
+    lines.append("9. CRITICAL: Preserve the exact nesting, wrappers, and structure of all elements.")
+    lines.append("10. CRITICAL: Do NOT add new sections or extraneous wrapper tags (no <html>, <body>, etc).")
     lines.append("")
     lines.append("Provide your output EXACTLY as valid HTML.")
     lines.append("Do NOT wrap the HTML in markdown code blocks (no ```html). Return ONLY the raw HTML.")

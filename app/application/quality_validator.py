@@ -13,6 +13,7 @@ Checks:
 
 from __future__ import annotations
 
+import collections
 import re
 
 from bs4 import BeautifulSoup, Comment
@@ -67,35 +68,37 @@ def _check_year_mismatch(updated_html: str) -> bool:
     """Return True if the title year and body years are contradictory.
 
     Example failure: title says "2026" but body paragraphs still say "2025".
+    This ignores historical dates (like 2021) by only checking for (title_year - 1).
     """
+    title_year = _extract_title_year(updated_html)
+    if not title_year:
+        return False
+
     soup = BeautifulSoup(updated_html, "html.parser")
-
-    # Extract year from title (h1)
+    
+    # Remove h1 so we don't re-match it in the body scan
     h1 = soup.find("h1")
-    if not h1:
-        return False
-    title_match = _YEAR_PATTERN.search(h1.get_text())
-    if not title_match:
-        return False
-    title_year = int(title_match.group(1))
+    if h1:
+        h1.decompose()
 
-    # Scan body text (excluding h1) for older year references
-    h1.decompose()  # remove h1 so we don't re-match it
+    # Scan body text (excluding h1) for the immediately preceding year
     body_text = soup.get_text()
+    previous_year = title_year - 1
+    
     for match in _YEAR_PATTERN.finditer(body_text):
         found_year = int(match.group(1))
-        if found_year < title_year:
+        if found_year == previous_year:
             return True
 
     return False
 
 
-def _get_links(soup: BeautifulSoup) -> set[str]:
-    """Extract all href values from anchor tags."""
-    links: set[str] = set()
+def _get_links(soup: BeautifulSoup) -> list[str]:
+    """Extract all href values from anchor tags in order."""
+    links: list[str] = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        links.add(
+        links.append(
             "".join(href).strip() if isinstance(href, list) else str(href).strip()
         )
     return links
@@ -185,10 +188,17 @@ class QualityValidator:
 
         # 4. Dangerous HTML
         for tag in updated_soup.find_all(True):
+            if report.dangerous_html:
+                break
+                
             if tag.name in _DANGEROUS_TAGS:
                 report.dangerous_html = True
             elif tag.name == "iframe":
-                src = tag.get("src", "").lower()
+                src_val = tag.get("src", "")
+                if isinstance(src_val, list):
+                    src = "".join(src_val).lower()
+                else:
+                    src = str(src_val if src_val is not None else "").lower()
                 if "youtube" not in src and "vimeo" not in src:
                     report.dangerous_html = True
 
@@ -196,6 +206,7 @@ class QualityValidator:
                 attr_lower = attr.lower()
                 if attr_lower.startswith("on"):
                     report.dangerous_html = True
+                    break
                 elif attr_lower in ("href", "src"):
                     val_str = (
                         "".join(val).lower()
@@ -206,10 +217,21 @@ class QualityValidator:
                         "vbscript:"
                     ):
                         report.dangerous_html = True
+                        break
 
         # 5. Images preserved
-        if len(original_soup.find_all("img")) != len(updated_soup.find_all("img")):
-            report.images_preserved = False
+        def _get_image_srcs(soup: BeautifulSoup) -> list[str]:
+            return [
+                str(img.get("src", ""))
+                for img in soup.find_all("img")
+            ]
+            
+        orig_img_counts = collections.Counter(_get_image_srcs(original_soup))
+        upd_img_counts = collections.Counter(_get_image_srcs(updated_soup))
+        for img, count in orig_img_counts.items():
+            if upd_img_counts[img] < count:
+                report.images_preserved = False
+                break
 
         # 6. Tables preserved
         if len(original_soup.find_all("table")) != len(
@@ -218,8 +240,12 @@ class QualityValidator:
             report.tables_preserved = False
 
         # 7. Links preserved
-        if _get_links(original_soup) - _get_links(updated_soup):
-            report.links_preserved = False
+        orig_link_counts = collections.Counter(_get_links(original_soup))
+        upd_link_counts = collections.Counter(_get_links(updated_soup))
+        for link, count in orig_link_counts.items():
+            if upd_link_counts[link] < count:
+                report.links_preserved = False
+                break
 
         # 8. Structure preserved
         (
