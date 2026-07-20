@@ -31,16 +31,17 @@ def test_workflow_json_retry_success(tmp_path: Path):
     mock_detail.post = mock_post
     wp_client.get_post.return_value = mock_detail
 
-    # First response is invalid JSON, second is valid
+    # First two responses are invalid JSON, third is valid
     responses = [
         "Not JSON at all",
+        "Still not JSON",
         '{"strengths": ["a"], "weaknesses": ["b"], "suggestions": ["c"], "confidence_scores": {"Test": 100}}'
     ]
     ai_provider = MockProvider(responses)
 
     artifacts = run_analysis_workflow(1, wp_client, ai_provider, tmp_path)
     
-    assert ai_provider.calls == 2
+    assert ai_provider.calls == 3
     assert "analysis" in artifacts
 
 def test_workflow_json_retry_failure(tmp_path: Path):
@@ -56,11 +57,11 @@ def test_workflow_json_retry_failure(tmp_path: Path):
     mock_detail.post = mock_post
     wp_client.get_post.return_value = mock_detail
 
-    # Both responses are invalid JSON
-    responses = ["Invalid 1", "Invalid 2"]
+    # All three responses are invalid JSON
+    responses = ["Invalid 1", "Invalid 2", "Invalid 3"]
     ai_provider = MockProvider(responses)
 
     with pytest.raises(ValueError, match="AI failed to return valid JSON"):
         run_analysis_workflow(1, wp_client, ai_provider, tmp_path)
     
-    assert ai_provider.calls == 2
+    assert ai_provider.calls == 3

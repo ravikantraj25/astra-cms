@@ -88,13 +88,12 @@ def test_build_analysis_prompt() -> None:
 
     prompt = build_analysis_prompt(article)
 
-    assert "ARTICLE ANALYSIS PROMPT" in prompt
+    assert "DEEP ARTICLE ANALYSIS" in prompt
     assert "Title: Analysis Article" in prompt
     assert "Word Count: 4" in prompt
-    assert "Headings: H1, H2" in prompt
-    assert "Number of paragraphs: 2" in prompt
-    assert "Number of images: 0" in prompt
-    assert "EXACTLY as a valid JSON object matching this schema" in prompt
+    assert "section_decisions" in prompt
+    assert "DECISION RULES" in prompt
+    assert "STRICT JSON" in prompt
 
 
 def test_build_full_article_update_prompt() -> None:

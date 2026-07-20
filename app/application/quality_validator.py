@@ -1,10 +1,21 @@
-"""Production quality validator for AI-generated HTML."""
+"""Production quality validator for AI-generated HTML.
+
+Checks:
+    1. HTML validity
+    2. Prompt leakage (always-banned + context-sensitive)
+    3. Year mismatch (title says 2026, body still says 2025)
+    4. Dangerous HTML (scripts, event handlers)
+    5. Image preservation
+    6. Table preservation
+    7. Link preservation
+    8. Structure preservation (headings, classes, IDs, Gutenberg)
+"""
 
 from __future__ import annotations
 
 import re
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 
 from app.domain.validation import QualityReport
 
@@ -25,9 +36,7 @@ _ALWAYS_BANNED_PHRASES = [
 ]
 
 # Phrases that are common in AI chat responses but also appear naturally in
-# article content (e.g. "Planning note:", "ensure parking").  These are only
-# flagged when they are *newly introduced* — i.e. present in the updated HTML
-# but absent from the original.
+# article content.  Only flagged when *newly introduced*.
 _CONTEXT_SENSITIVE_PHRASES = [
     "Reason:",
     "Explanation:",
@@ -35,6 +44,96 @@ _CONTEXT_SENSITIVE_PHRASES = [
     "Sure",
     "Certainly",
 ]
+
+# Regex to find 4-digit years in text.
+_YEAR_PATTERN = re.compile(r"\b(20\d{2})\b")
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _extract_title_year(html: str) -> int | None:
+    """Extract the year from the first <h1> tag, if present."""
+    soup = BeautifulSoup(html, "html.parser")
+    h1 = soup.find("h1")
+    if h1:
+        match = _YEAR_PATTERN.search(h1.get_text())
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _check_year_mismatch(updated_html: str) -> bool:
+    """Return True if the title year and body years are contradictory.
+
+    Example failure: title says "2026" but body paragraphs still say "2025".
+    """
+    soup = BeautifulSoup(updated_html, "html.parser")
+
+    # Extract year from title (h1)
+    h1 = soup.find("h1")
+    if not h1:
+        return False
+    title_match = _YEAR_PATTERN.search(h1.get_text())
+    if not title_match:
+        return False
+    title_year = int(title_match.group(1))
+
+    # Scan body text (excluding h1) for older year references
+    h1.decompose()  # remove h1 so we don't re-match it
+    body_text = soup.get_text()
+    for match in _YEAR_PATTERN.finditer(body_text):
+        found_year = int(match.group(1))
+        if found_year < title_year:
+            return True
+
+    return False
+
+
+def _get_links(soup: BeautifulSoup) -> set[str]:
+    """Extract all href values from anchor tags."""
+    links: set[str] = set()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        links.add(
+            "".join(href).strip() if isinstance(href, list) else str(href).strip()
+        )
+    return links
+
+
+def _get_structure_fingerprint(
+    soup: BeautifulSoup,
+) -> tuple[int, set[str], set[str], int]:
+    """Extract structural metadata: heading count, classes, IDs, Gutenberg comments."""
+    headings = len(soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]))
+    classes: set[str] = set()
+    ids: set[str] = set()
+
+    for tag in soup.find_all(True):
+        if tag.get("id"):
+            val = tag["id"]
+            if isinstance(val, list):
+                ids.update(val)
+            else:
+                ids.add(str(val))
+        if tag.get("class"):
+            val = tag["class"]
+            if isinstance(val, list):
+                classes.update(val)
+            else:
+                classes.add(str(val))
+
+    gutenberg = sum(
+        1
+        for c in soup.find_all(
+            string=lambda text: isinstance(text, Comment)
+        )
+        if "wp:" in str(c)
+    )
+    return headings, classes, ids, gutenberg
+
+
+# ── Main validator ───────────────────────────────────────────────────────────
 
 
 class QualityValidator:
@@ -52,6 +151,7 @@ class QualityValidator:
             links_preserved=True,
             tables_preserved=True,
             structure_preserved=True,
+            year_mismatch=False,
             word_diff=0,
             html_diff_percent=0.0,
             ready_to_publish=True,
@@ -68,14 +168,11 @@ class QualityValidator:
         lower_updated = updated_html.lower()
         lower_original = original_html.lower()
 
-        # Always-banned phrases: flag if present anywhere in the output
         for phrase in _ALWAYS_BANNED_PHRASES:
             if phrase.lower() in lower_updated:
                 report.prompt_leakage = True
                 break
 
-        # Context-sensitive phrases: only flag if NEWLY INTRODUCED by the AI
-        # (present in updated but not in original)
         if not report.prompt_leakage:
             for phrase in _CONTEXT_SENSITIVE_PHRASES:
                 p_lower = phrase.lower()
@@ -83,7 +180,10 @@ class QualityValidator:
                     report.prompt_leakage = True
                     break
 
-        # 3. Dangerous HTML
+        # 3. Year Mismatch
+        report.year_mismatch = _check_year_mismatch(updated_html)
+
+        # 4. Dangerous HTML
         for tag in updated_soup.find_all(True):
             if tag.name in _DANGEROUS_TAGS:
                 report.dangerous_html = True
@@ -91,66 +191,52 @@ class QualityValidator:
                 src = tag.get("src", "").lower()
                 if "youtube" not in src and "vimeo" not in src:
                     report.dangerous_html = True
-            
+
             for attr, val in tag.attrs.items():
                 attr_lower = attr.lower()
                 if attr_lower.startswith("on"):
                     report.dangerous_html = True
                 elif attr_lower in ("href", "src"):
-                    val_str = "".join(val).lower() if isinstance(val, list) else str(val).lower()
-                    if val_str.startswith("javascript:") or val_str.startswith("vbscript:"):
+                    val_str = (
+                        "".join(val).lower()
+                        if isinstance(val, list)
+                        else str(val).lower()
+                    )
+                    if val_str.startswith("javascript:") or val_str.startswith(
+                        "vbscript:"
+                    ):
                         report.dangerous_html = True
 
-        # 4. Images preserved
+        # 5. Images preserved
         if len(original_soup.find_all("img")) != len(updated_soup.find_all("img")):
             report.images_preserved = False
 
-        # 5. Tables preserved
-        if len(original_soup.find_all("table")) != len(updated_soup.find_all("table")):
+        # 6. Tables preserved
+        if len(original_soup.find_all("table")) != len(
+            updated_soup.find_all("table")
+        ):
             report.tables_preserved = False
 
-        # 6. Links preserved
-        def get_links(soup: BeautifulSoup) -> set[str]:
-            links = set()
-            for a in soup.find_all("a", href=True):
-                href = a["href"]
-                links.add("".join(href).strip() if isinstance(href, list) else str(href).strip())
-            return links
-
-        if get_links(original_soup) - get_links(updated_soup):
+        # 7. Links preserved
+        if _get_links(original_soup) - _get_links(updated_soup):
             report.links_preserved = False
 
-        # 7. Structure preserved (Headings, CSS, IDs, Gutenberg comments)
-        def get_structure_fingerprint(soup: BeautifulSoup) -> tuple[int, set[str], set[str], int]:
-            headings = len(soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]))
-            classes = set()
-            ids = set()
-            for tag in soup.find_all(True):
-                if tag.get("id"):
-                    val = tag["id"]
-                    if isinstance(val, list):
-                        ids.update(val)
-                    else:
-                        ids.add(str(val))
-                if tag.get("class"):
-                    val = tag["class"]
-                    if isinstance(val, list):
-                        classes.update(val)
-                    else:
-                        classes.add(str(val))
-            
-            from bs4 import Comment
-            gutenberg = sum(1 for c in soup.find_all(string=lambda text: isinstance(text, Comment)) if "wp:" in str(c))
-            return headings, classes, ids, gutenberg
-
-        orig_headings, orig_classes, orig_ids, orig_gutenberg = get_structure_fingerprint(original_soup)
-        upd_headings, upd_classes, upd_ids, upd_gutenberg = get_structure_fingerprint(updated_soup)
+        # 8. Structure preserved
+        (
+            orig_headings,
+            orig_classes,
+            orig_ids,
+            orig_gutenberg,
+        ) = _get_structure_fingerprint(original_soup)
+        (
+            upd_headings,
+            upd_classes,
+            upd_ids,
+            upd_gutenberg,
+        ) = _get_structure_fingerprint(updated_soup)
 
         if orig_headings != upd_headings:
             report.structure_preserved = False
-        # Gutenberg: only fail if the original HAD comments and they were
-        # removed or reduced.  If the original had 0, the AI adding some is
-        # harmless (they get stripped in post-processing anyway).
         if orig_gutenberg > 0 and upd_gutenberg < orig_gutenberg:
             report.structure_preserved = False
         if orig_classes - upd_classes:
@@ -158,7 +244,7 @@ class QualityValidator:
         if orig_ids - upd_ids:
             report.structure_preserved = False
 
-        # 8. Statistics
+        # 9. Statistics
         orig_words = len(original_soup.get_text().split())
         upd_words = len(updated_soup.get_text().split())
         report.word_diff = upd_words - orig_words
@@ -166,15 +252,18 @@ class QualityValidator:
         orig_len = len(original_html.encode("utf-8"))
         upd_len = len(updated_html.encode("utf-8"))
         if orig_len > 0:
-            report.html_diff_percent = round(((upd_len - orig_len) / orig_len) * 100, 2)
+            report.html_diff_percent = round(
+                ((upd_len - orig_len) / orig_len) * 100, 2
+            )
         else:
             report.html_diff_percent = 100.0
 
-        # Overall Status
+        # ── Overall Status ────────────────────────────────────────────────
         is_valid = (
             report.html_valid
             and not report.prompt_leakage
             and not report.dangerous_html
+            and not report.year_mismatch
             and report.images_preserved
             and report.links_preserved
             and report.tables_preserved

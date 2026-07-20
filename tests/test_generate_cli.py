@@ -63,7 +63,7 @@ def test_generate_html_success(
         patch("app.application.section_detector.detect_sections") as mock_detect,
     ):
         mock_provider_instance = MockProvider.return_value
-        mock_provider_instance.generate.return_value = "<p>Updated Intro</p>"
+        mock_provider_instance.generate.return_value = "<ASTRA_HTML_START>\n<p>Updated Intro</p>\n<ASTRA_HTML_END>"
 
         # Mock detect_sections to return a section matching our plan
         from app.domain.article import Article, Section

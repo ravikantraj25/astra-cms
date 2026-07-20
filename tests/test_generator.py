@@ -221,7 +221,7 @@ def test_generate_full_article_update_raises_on_bad_response() -> None:
     # Missing ASTRA markers — should fail validation
     mock_ai.generate.return_value = "<h1>Title</h1><p>Updated</p>"
 
-    with pytest.raises(RuntimeError, match="missing required delimiters"):
+    with pytest.raises(RuntimeError, match="exactly one"):
         generate_full_article_update(original_html, plan, mock_ai)
 
 

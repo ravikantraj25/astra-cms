@@ -382,6 +382,21 @@ class WordPressClient:
             response = client.send(req)
             self._check_response_status(response)
             data = self._parse_json(response)
+        except httpx.TimeoutException as exc:
+            logger.error("Request timed out: POST %s", req.url)
+            raise TimeoutError(
+                message=f"Request timed out: POST {req.url}",
+            ) from exc
+        except httpx.ConnectError as exc:
+            logger.error("Connection failed: %s", exc)
+            raise ConnectionError(
+                message=f"Could not connect to {self._base_url}: {exc}",
+            ) from exc
+        except httpx.HTTPError as exc:
+            logger.error("HTTP error: %s", exc)
+            raise ConnectionError(
+                message=f"Network error: {exc}",
+            ) from exc
         except Exception as e:
             # 3. If request fails
             print("\n--- DEEP DIAGNOSTICS: PUBLISH FAILED ---")

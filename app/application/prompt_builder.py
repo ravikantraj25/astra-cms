@@ -6,12 +6,18 @@ sections.  No AI calls are made — this module only produces the prompt string.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
+from bs4 import BeautifulSoup, Tag, NavigableString, Comment
 
 from app.domain.article import Article, Section
 
 # Path to the directory containing prompt template files.
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+
+
+def _get_current_year() -> int:
+    return datetime.now().year
 
 
 def _detect_article_type(article: Article) -> str:
@@ -31,6 +37,230 @@ def _detect_article_type(article: Article) -> str:
     return "General Article"
 
 
+def _truncate_html(html: str, max_chars: int = 2000) -> str:
+    """Truncate HTML content to fit within token limits safely.
+
+    Walks the DOM recursively and appends complete child elements
+    until the character limit is reached. Always returns valid HTML.
+    """
+    if len(html) <= max_chars:
+        return html
+
+    soup = BeautifulSoup(html, "html.parser")
+    new_soup = BeautifulSoup("", "html.parser")
+    
+    current_length = 0
+    
+    def walk_and_truncate(node, parent_node) -> bool:
+        """Returns True if the node fit completely, False if it reached the limit."""
+        nonlocal current_length
+        
+        if current_length >= max_chars:
+            return False
+            
+        node_html = str(node)
+        if current_length + len(node_html) <= max_chars:
+            # The entire node fits perfectly. Parse and append its children exactly.
+            parsed_node = BeautifulSoup(node_html, "html.parser")
+            parent_node.extend(list(parsed_node.children))
+            current_length += len(node_html)
+            return True
+            
+        # The node doesn't fully fit.
+        if isinstance(node, Comment):
+            return False
+            
+        if isinstance(node, NavigableString):
+            allowed_len = max_chars - current_length
+            if allowed_len > 0:
+                truncated_text = str(node)[:allowed_len]
+                parent_node.append(NavigableString(truncated_text))
+                current_length += len(truncated_text)
+            return False
+            
+        if isinstance(node, Tag):
+            # The tag doesn't fully fit, try to fit its children.
+            new_tag = new_soup.new_tag(node.name)
+            new_tag.attrs = node.attrs.copy()
+            parent_node.append(new_tag)
+            
+            empty_tag_len = len(str(new_tag))
+            current_length += empty_tag_len
+            
+            if current_length >= max_chars:
+                return False
+                
+            for child in node.children:
+                if not walk_and_truncate(child, new_tag):
+                    break
+                    
+            return False
+            
+        return False
+
+    for child in soup.children:
+        if not walk_and_truncate(child, new_soup):
+            break
+            
+    truncated = str(new_soup)
+    return truncated + "\n... [TRUNCATED] ..."
+
+
+# ── Analysis prompt (the big redesign) ───────────────────────────────────────
+
+
+def build_analysis_prompt(
+    article: Article,
+    custom_instructions: str | None = None,
+) -> str:
+    """Build a deep-inspection analysis prompt.
+
+    Instead of sending only metadata, this prompt sends **every detected
+    section's name, type, and raw HTML** so the AI can inspect the actual
+    content and make per-section Update / Skip / Delete decisions.
+
+    Args:
+        article: A parsed and section-detected Article.
+        custom_instructions: Optional user-supplied instructions.
+
+    Returns:
+        A formatted prompt string ready to be sent to an AI provider.
+    """
+    lines: list[str] = []
+    current_year = _get_current_year()
+
+    # ── Header ────────────────────────────────────────────────────────────
+    lines.append("=" * 60)
+    lines.append("ASTRA CMS — DEEP ARTICLE ANALYSIS")
+    lines.append("=" * 60)
+    lines.append("")
+    lines.append(f"Title: {article.title or 'Untitled'}")
+    lines.append(f"Article Type: {_detect_article_type(article)}")
+    lines.append(f"Word Count: {article.word_count}")
+    lines.append(f"Current Year: {current_year}")
+    if article.meta_description:
+        lines.append(f"Meta Description: {article.meta_description}")
+    lines.append("")
+
+    # ── Custom instructions ───────────────────────────────────────────────
+    if custom_instructions:
+        lines.append("-" * 60)
+        lines.append("CUSTOM INSTRUCTIONS FROM USER")
+        lines.append("-" * 60)
+        lines.append("")
+        lines.append(f"CRITICAL REQUIREMENT: {custom_instructions}")
+        lines.append(
+            "Apply these instructions to EVERY section decision below."
+        )
+        lines.append("")
+
+    # ── All sections with HTML ────────────────────────────────────────────
+    lines.append("-" * 60)
+    lines.append("SECTIONS TO INSPECT")
+    lines.append("-" * 60)
+    lines.append("")
+
+    if article.sections:
+        for idx, section in enumerate(article.sections, 1):
+            lines.append(f"--- SECTION {idx} ---")
+            lines.append(f"SECTION ID (astra_id): {section.astra_id}")
+            lines.append(f"SECTION NAME: {section.name}")
+            lines.append(f"SECTION TYPE: {section.type}")
+            lines.append(f"SECTION HTML:")
+            lines.append(_truncate_html(section.content))
+            lines.append("")
+    else:
+        lines.append("No sections detected.")
+        lines.append("")
+
+    # ── Decision rules ────────────────────────────────────────────────────
+    lines.append("-" * 60)
+    lines.append("DECISION RULES")
+    lines.append("-" * 60)
+    lines.append("")
+    lines.append("For EACH section above, you MUST evaluate it independently:")
+    lines.append("  1. Inspect one section completely.")
+    lines.append("  2. Determine if it needs to be Update / Skip / Delete.")
+    lines.append("  3. Assign a confidence score (0-100).")
+    lines.append("  4. Assign a priority based on the Priority Rules below.")
+    lines.append("  5. Only then continue to the next section.")
+    lines.append("")
+    lines.append("Mark as UPDATE if the section contains:")
+    lines.append(f"  - Outdated year references (anything before {current_year})")
+    lines.append("  - Outdated statistics, figures, or data")
+    lines.append("  - Obsolete software versions or tools")
+    lines.append("  - Event schedules, dates, timings")
+    lines.append("  - Registration, ticketing, or pricing info")
+    lines.append("  - Muhurat, panchang, or calendar dates")
+    lines.append("  - Image alt text referencing an old year")
+    lines.append("  - Table cells with old dates or prices")
+    lines.append("")
+    lines.append("Mark as SKIP if the section contains:")
+    lines.append("  - History, mythology, or cultural explanations")
+    lines.append("  - Evergreen definitions or timeless FAQs")
+    lines.append("  - Accurately sourced statistics that are still current")
+    lines.append("  - Content that is already up to date")
+    lines.append("")
+    lines.append("Mark as DELETE only if:")
+    lines.append("  - The section is a duplicate of another section")
+    lines.append("  - The section is entirely irrelevant filler")
+    lines.append("")
+    lines.append("PRIORITY RULES:")
+    lines.append("  HIGH: Old year, Broken links, Wrong dates, Event schedules, Registration, Pricing")
+    lines.append("  MEDIUM: Outdated wording, Old statistics")
+    lines.append("  LOW: Grammar, SEO, Minor clarity improvements")
+    lines.append("")
+
+    # ── Title rule ────────────────────────────────────────────────────────
+    lines.append("-" * 60)
+    lines.append("TITLE RULE")
+    lines.append("-" * 60)
+    lines.append("")
+    lines.append(
+        f"If the current title contains a year before {current_year}, "
+        f"provide a 'new_title' with {current_year}."
+    )
+    lines.append("Otherwise set new_title to null.")
+    lines.append("")
+
+    # ── Output format ─────────────────────────────────────────────────────
+    lines.append("-" * 60)
+    lines.append("OUTPUT FORMAT — STRICT JSON")
+    lines.append("-" * 60)
+    lines.append("")
+    lines.append("Return ONLY a valid JSON object. No markdown. No explanation.")
+    lines.append("Do NOT wrap in ```json code fences.")
+    lines.append("")
+    lines.append("{")
+    lines.append('  "new_title": "string or null",')
+    lines.append('  "strengths": ["string"],')
+    lines.append('  "weaknesses": ["string"],')
+    lines.append('  "suggestions": ["string"],')
+    lines.append('  "section_decisions": [')
+    lines.append("    {")
+    lines.append('      "astra_id": "exact astra_id or null",')
+    lines.append('      "section": "exact section name",')
+    lines.append('      "action": "Update",')
+    lines.append('      "priority": "High",')
+    lines.append('      "confidence": 98,')
+    lines.append(f'      "reason": "Contains {current_year - 1} references that must be updated."')
+    lines.append("    }")
+    lines.append("  ]")
+    lines.append("}")
+    lines.append("")
+    lines.append("IMPORTANT:")
+    lines.append("- You MUST include a decision for EVERY section listed above.")
+    lines.append("- section names must EXACTLY match the SECTION NAME values above.")
+    lines.append(f"- The current year is {current_year}.")
+    lines.append("- Do NOT add sections that were not listed.")
+    lines.append("- Return ONLY the JSON object. No other text.")
+
+    return "\n".join(lines)
+
+
+# ── Legacy prompt (kept for backward compatibility) ──────────────────────────
+
+
 def build_prompt(article: Article) -> str:
     """Build an AI prompt from an Article and its detected sections.
 
@@ -42,24 +272,19 @@ def build_prompt(article: Article) -> str:
     """
     lines: list[str] = []
 
-    # ── Header ───────────────────────────────────────────────────────────
     lines.append("=" * 60)
     lines.append("ARTICLE UPDATE PROMPT")
     lines.append("=" * 60)
     lines.append("")
-
-    # ── Title ────────────────────────────────────────────────────────────
     lines.append(f"Title: {article.title or 'Untitled'}")
     lines.append(f"Article Type: {_detect_article_type(article)}")
     lines.append(f"Word Count: {article.word_count}")
     lines.append("")
 
-    # ── Meta ─────────────────────────────────────────────────────────────
     if article.meta_description:
         lines.append(f"Meta Description: {article.meta_description}")
         lines.append("")
 
-    # ── Sections ─────────────────────────────────────────────────────────
     lines.append("-" * 60)
     lines.append("DETECTED SECTIONS")
     lines.append("-" * 60)
@@ -72,7 +297,6 @@ def build_prompt(article: Article) -> str:
         lines.append("  No sections detected.")
     lines.append("")
 
-    # ── Headings ─────────────────────────────────────────────────────────
     if article.headings:
         lines.append("-" * 60)
         lines.append("HEADING STRUCTURE")
@@ -82,7 +306,6 @@ def build_prompt(article: Article) -> str:
             lines.append(f"  - {heading}")
         lines.append("")
 
-    # ── Update Instructions ──────────────────────────────────────────────
     lines.append("-" * 60)
     lines.append("UPDATE INSTRUCTIONS")
     lines.append("-" * 60)
@@ -109,7 +332,6 @@ def build_prompt(article: Article) -> str:
     lines.append("12. Do NOT remove any existing content.")
     lines.append("")
 
-    # ── Output Format ────────────────────────────────────────────────────
     lines.append("-" * 60)
     lines.append("OUTPUT FORMAT")
     lines.append("-" * 60)
@@ -125,75 +347,14 @@ def build_prompt(article: Article) -> str:
     return "\n".join(lines)
 
 
-def build_analysis_prompt(article: Article, custom_instructions: str | None = None) -> str:
-    """Build an AI prompt for analyzing an Article.
-
-    The generated prompt instructs the AI to return a JSON object with analysis.
-    """
-    lines: list[str] = []
-    lines.append("=" * 60)
-    lines.append("ARTICLE ANALYSIS PROMPT")
-    lines.append("=" * 60)
-    lines.append("")
-    lines.append(f"Title: {article.title or 'Untitled'}")
-    lines.append(f"Article Type: {_detect_article_type(article)}")
-    lines.append(f"Word Count: {article.word_count}")
-
-    if article.meta_description:
-        lines.append(f"Meta Description: {article.meta_description}")
-
-    lines.append("")
-    lines.append("Here is the parsed content structure:")
-    if article.headings:
-        lines.append(f"Headings: {', '.join(article.headings)}")
-    lines.append(f"Number of paragraphs: {len(article.paragraphs)}")
-    lines.append(f"Number of images: {len(article.images)}")
-    lines.append(f"Number of links: {len(article.links)}")
-
-    if custom_instructions:
-        lines.append("")
-        lines.append("-" * 60)
-        lines.append("CUSTOM INSTRUCTIONS FROM USER")
-        lines.append("-" * 60)
-        lines.append("")
-        lines.append(f"CRITICAL REQUIREMENT: {custom_instructions}")
-        lines.append("Ensure your analysis completely adheres to this requirement.")
-        lines.append("If this requires updating dates, specify 'Update' actions for ALL sections containing dates.")
-
-    lines.append("")
-    lines.append("-" * 60)
-    lines.append("ANALYSIS INSTRUCTIONS")
-    lines.append("-" * 60)
-    lines.append("")
-    lines.append("Please analyze the article structure and metadata above.")
-    lines.append("In your analysis, specifically identify:")
-    lines.append(
-        "1. Outdated information that needs updating (e.g., old dates, stats, deprecated tools)."
-    )
-    lines.append(
-        "2. Evergreen content and sections that are accurate and should be preserved intact."
-    )
-    lines.append(
-        "3. Sections that require targeted changes vs. sections where rewrites should be avoided."
-    )
-    lines.append(
-        "4. If the title needs updating (e.g. changing the year), provide a 'new_title'. Otherwise leave it out or null."
-    )
-    lines.append("Provide your output EXACTLY as a valid JSON object matching this schema:")
-    lines.append("{")
-    lines.append('  "new_title": "string (optional new title)",')
-    lines.append('  "seo_score": 85,')
-    lines.append('  "readability_score": 70,')
-    lines.append('  "strengths": ["string"],')
-    lines.append('  "weaknesses": ["string"],')
-    lines.append('  "suggestions": ["string"]')
-    lines.append("}")
-    lines.append("Do NOT wrap the JSON in markdown code blocks. Return ONLY valid JSON.")
-
-    return "\n".join(lines)
+# ── Section update prompt ────────────────────────────────────────────────────
 
 
-def build_section_update_prompt(section: Section, reason: str, custom_instructions: str | None = None) -> str:
+def build_section_update_prompt(
+    section: Section,
+    reason: str,
+    custom_instructions: str | None = None,
+) -> str:
     """Build an AI prompt for rewriting a specific section.
 
     Args:
@@ -236,12 +397,13 @@ def build_section_update_prompt(section: Section, reason: str, custom_instructio
     lines.append("4. CRITICAL: Preserve all HTML schema, attributes, IDs, and CSS classes exactly.")
     lines.append("5. CRITICAL: Preserve all Gutenberg comments (<!-- wp:... --> and <!-- /wp:... -->) exactly.")
     lines.append("6. CRITICAL: Preserve the exact nesting, wrappers, and structure of all elements.")
-    lines.append("7. Detect and update any outdated information (dates, statistics, obsolete details).")
-    lines.append("8. Preserve evergreen content and timeless definitions without modification.")
-    lines.append("9. Update only what needs changes based on the reason; avoid unnecessary rewrites.")
-    lines.append("10. Maintain consistent tone, voice, and formatting across the section.")
-    lines.append("11. Improve clarity and readability of the text while keeping accurate parts unchanged.")
-    lines.append("12. Do NOT add new sections or extraneous wrapper tags (no <html>, <body>, etc).")
+    lines.append("7. CRITICAL: Do NOT modify image src or srcset URLs.")
+    lines.append("8. Detect and update any outdated information (dates, statistics, obsolete details).")
+    lines.append("9. Preserve evergreen content and timeless definitions without modification.")
+    lines.append("10. Update only what needs changes based on the reason; avoid unnecessary rewrites.")
+    lines.append("11. Maintain consistent tone, voice, and formatting across the section.")
+    lines.append("12. Improve clarity and readability of the text while keeping accurate parts unchanged.")
+    lines.append("13. Do NOT add new sections or extraneous wrapper tags (no <html>, <body>, etc).")
     lines.append("")
     lines.append("Provide your output EXACTLY as valid HTML.")
     lines.append("Do NOT wrap the HTML in markdown code blocks (no ```html). Return ONLY the raw HTML.")
@@ -253,6 +415,9 @@ def build_section_update_prompt(section: Section, reason: str, custom_instructio
     lines.append("<ASTRA_HTML_END>")
 
     return "\n".join(lines)
+
+
+# ── Full-article update prompt (template-based) ─────────────────────────────
 
 
 def build_full_article_update_prompt(

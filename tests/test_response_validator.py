@@ -14,35 +14,35 @@ def test_valid_response() -> None:
     assert result == "<h1>Hello</h1><p>World</p>"
 
 
-def test_reasoning_before_html() -> None:
-    """Text before the start marker should be ignored — only inner content matters."""
+def test_reasoning_before_html_rejected() -> None:
+    """Text before the start marker should be rejected."""
     response = (
         "Here is my reasoning about the changes.\n"
         "<ASTRA_HTML_START>\n<h1>Title</h1>\n<ASTRA_HTML_END>"
     )
-    result = validate_ai_response(response)
-    assert result == "<h1>Title</h1>"
+    with pytest.raises(RuntimeError, match="non-whitespace content outside"):
+        validate_ai_response(response)
 
 
-def test_reasoning_after_html() -> None:
-    """Text after the end marker should be ignored — only inner content matters."""
+def test_reasoning_after_html_rejected() -> None:
+    """Text after the end marker should be rejected."""
     response = (
         "<ASTRA_HTML_START>\n<h1>Title</h1>\n<ASTRA_HTML_END>\n"
         "I hope this helps! Let me know if you need more changes."
     )
-    result = validate_ai_response(response)
-    assert result == "<h1>Title</h1>"
+    with pytest.raises(RuntimeError, match="non-whitespace content outside"):
+        validate_ai_response(response)
 
 
-def test_markdown_fences_rejected() -> None:
-    """Markdown code fences inside the markers should be rejected."""
+def test_markdown_fences_cleaned() -> None:
+    """Markdown code fences inside the markers should be cleaned."""
     response = (
         "<ASTRA_HTML_START>\n"
         "```html\n<h1>Title</h1>\n```\n"
         "<ASTRA_HTML_END>"
     )
-    with pytest.raises(RuntimeError, match="banned phrase"):
-        validate_ai_response(response)
+    result = validate_ai_response(response)
+    assert result == "<h1>Title</h1>"
 
 
 def test_malformed_html_rejected() -> None:
@@ -59,7 +59,7 @@ def test_malformed_html_rejected() -> None:
 def test_missing_delimiters() -> None:
     """A response without ASTRA markers should be rejected."""
     response = "<h1>Title</h1><p>Content</p>"
-    with pytest.raises(RuntimeError, match="missing required delimiters"):
+    with pytest.raises(RuntimeError, match="exactly one"):
         validate_ai_response(response)
 
 
@@ -93,59 +93,62 @@ def test_contamination_section_update() -> None:
         validate_ai_response(response)
 
 
-def test_contamination_certainly() -> None:
-    """Banned phrase 'Certainly' inside content should be rejected."""
+def test_context_sensitive_certainly_passes() -> None:
+    """Context-sensitive phrase 'Certainly' should pass response_validator.
+
+    These are caught later by QualityValidator when comparing original vs updated.
+    """
     response = (
         "<ASTRA_HTML_START>\n"
-        "<p>Certainly, here is the updated content.</p>\n"
+        "<p>Certainly, this festival is celebrated widely.</p>\n"
         "<ASTRA_HTML_END>"
     )
-    with pytest.raises(RuntimeError, match="banned phrase"):
-        validate_ai_response(response)
+    result = validate_ai_response(response)
+    assert "<p>" in result
 
 
-def test_contamination_explanation() -> None:
-    """Banned phrase 'Explanation:' inside content should be rejected."""
+def test_context_sensitive_explanation_passes() -> None:
+    """Context-sensitive phrase 'Explanation:' should pass response_validator."""
     response = (
         "<ASTRA_HTML_START>\n"
         "<p>Explanation: I changed the title.</p>\n"
         "<ASTRA_HTML_END>"
     )
-    with pytest.raises(RuntimeError, match="banned phrase"):
-        validate_ai_response(response)
+    result = validate_ai_response(response)
+    assert "<p>" in result
 
 
-def test_contamination_note() -> None:
-    """Banned phrase 'Note:' inside content should be rejected."""
+def test_context_sensitive_note_passes() -> None:
+    """Context-sensitive phrase 'Note:' should pass response_validator."""
     response = (
         "<ASTRA_HTML_START>\n"
         "<p>Note: This section was rewritten.</p>\n"
         "<ASTRA_HTML_END>"
     )
-    with pytest.raises(RuntimeError, match="banned phrase"):
-        validate_ai_response(response)
+    result = validate_ai_response(response)
+    assert "<p>" in result
 
 
-def test_contamination_reason() -> None:
-    """Banned phrase 'Reason:' inside content should be rejected."""
+def test_context_sensitive_reason_passes() -> None:
+    """Context-sensitive phrase 'Reason:' should pass response_validator."""
     response = (
         "<ASTRA_HTML_START>\n"
         "<p>Reason: Outdated information.</p><h1>Title</h1>\n"
         "<ASTRA_HTML_END>"
     )
-    with pytest.raises(RuntimeError, match="banned phrase"):
-        validate_ai_response(response)
+    result = validate_ai_response(response)
+    assert "<h1>" in result
 
 
-def test_contamination_sure() -> None:
-    """Banned phrase 'Sure' inside content should be rejected."""
+def test_context_sensitive_sure_passes() -> None:
+    """Context-sensitive phrase 'Sure' should pass response_validator."""
     response = (
         "<ASTRA_HTML_START>\n"
         "<p>Sure, I can help with that.</p>\n"
         "<ASTRA_HTML_END>"
     )
-    with pytest.raises(RuntimeError, match="banned phrase"):
-        validate_ai_response(response)
+    result = validate_ai_response(response)
+    assert "<p>" in result
 
 
 def test_contamination_updated_html() -> None:

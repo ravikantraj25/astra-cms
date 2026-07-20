@@ -52,6 +52,10 @@ def test_workflow_analyze_success(
             "app.presentation.cli.workflow_commands.get_groq_settings",
             return_value=mock_groq_settings,
         ),
+        patch(
+            "app.infrastructure.wordpress.client.WordPressClient.__enter__",
+            return_value=MagicMock()
+        )
     ):
         result = runner.invoke(cli, ["workflow", "analyze", "123"])
 
@@ -120,6 +124,10 @@ def test_workflow_analyze_failure(
             "app.presentation.cli.workflow_commands.get_groq_settings",
             return_value=mock_groq_settings,
         ),
+        patch(
+            "app.infrastructure.wordpress.client.WordPressClient.__enter__",
+            return_value=MagicMock()
+        )
     ):
         result = runner.invoke(cli, ["workflow", "analyze", "123"])
 
@@ -191,6 +199,9 @@ def test_workflow_publish_success(
 
     updated_file = output_dir / "post_123_updated.html"
     updated_file.write_text("<h1>Title</h1><p>Draft</p>", encoding="utf-8")
+
+    original_file = output_dir / "post_123.html"
+    original_file.write_text("<h1>Old Title</h1><p>Old Draft</p>", encoding="utf-8")
 
     from app.infrastructure.config.settings import AppSettings
     from app.infrastructure.wordpress.models import WPPost
