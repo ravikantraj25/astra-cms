@@ -25,7 +25,12 @@ def test_generate_plan_success_single_html(
     html_file.write_text("<h1>Test</h1><h2>FAQ</h2>", encoding="utf-8")
 
     analysis_file = tmp_path / "analysis.json"
-    analysis_file.write_text(json.dumps({"suggestions": ["update faq"]}), encoding="utf-8")
+    analysis_file.write_text(json.dumps({
+        "strengths": [],
+        "weaknesses": ["outdated info"],
+        "suggestions": ["update faq"],
+        "confidence_scores": {"FAQ": 95}
+    }), encoding="utf-8")
 
     result = cli_runner.invoke(cli, ["plan", str(analysis_file)])
 

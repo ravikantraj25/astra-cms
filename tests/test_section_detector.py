@@ -19,8 +19,7 @@ def test_detect_sections() -> None:
 
         <h2>History</h2>
         <p>Founded in 2026.</p>
-        <p>Aug 15, 2026 was a great day.</p>
-
+        
         <h2>Venue</h2>
         <p>New York City</p>
 
@@ -32,6 +31,7 @@ def test_detect_sections() -> None:
 
         <h2>Conclusion</h2>
         <p>The end.</p>
+        <p>Aug 15, 2026 was a great day.</p>
     </body>
     </html>
     """

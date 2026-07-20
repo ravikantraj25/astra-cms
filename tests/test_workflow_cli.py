@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 from pydantic import SecretStr
@@ -66,12 +66,11 @@ def test_workflow_analyze_missing_wp_creds(
     mock_groq_settings: GroqSettings,
 ) -> None:
     """Test the workflow analyze command when WP creds are missing."""
-    empty_wp_settings = WordPressSettings()
-
     with (
         patch(
-            "app.presentation.cli.workflow_commands.get_wp_settings",
-            return_value=empty_wp_settings,
+            "app.infrastructure.config.settings.WordPressSettings.is_configured",
+            new_callable=PropertyMock,
+            return_value=False,
         ),
         patch(
             "app.presentation.cli.workflow_commands.get_groq_settings",
@@ -88,15 +87,14 @@ def test_workflow_analyze_missing_groq_creds(
     mock_wp_settings: WordPressSettings,
 ) -> None:
     """Test the workflow analyze command when Groq creds are missing."""
-    empty_groq_settings = GroqSettings()
-
     with (
         patch(
             "app.presentation.cli.workflow_commands.get_wp_settings", return_value=mock_wp_settings
         ),
         patch(
-            "app.presentation.cli.workflow_commands.get_groq_settings",
-            return_value=empty_groq_settings,
+            "app.infrastructure.config.settings.GroqSettings.is_configured",
+            new_callable=PropertyMock,
+            return_value=False,
         ),
     ):
         result = runner.invoke(cli, ["workflow", "analyze", "123"])

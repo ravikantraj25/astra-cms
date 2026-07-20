@@ -26,8 +26,7 @@ class Section(BaseModel):
 
     name: str = Field(description="Name of the section (e.g., Introduction, Conclusion).")
     type: str = Field(description="Type of the section (e.g., introduction, heading, image).")
-    start_position: int = Field(description="Start character index in the raw HTML string.")
-    end_position: int = Field(description="End character index in the raw HTML string.")
+    astra_id: str = Field(description="Unique data-astra-id assigned to this section's root tag.")
     content: str = Field(description="The textual content or raw HTML of this section.")
 
 

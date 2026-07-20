@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from app.application.planner import build_update_plan
 from app.domain.article import Article, Section
+from app.domain.plan import AnalysisResult
 
 
 def test_build_update_plan_empty() -> None:
     """It should return an empty plan if no sections are present."""
     article = Article(title="No Sections")
-    plan = build_update_plan(article, {})
+    plan = build_update_plan(article, AnalysisResult())
     assert len(plan.actions) == 0
 
 
@@ -21,31 +22,28 @@ def test_build_update_plan_with_matches() -> None:
             Section(
                 name="FAQ",
                 type="heading",
-                start_position=0,
-                end_position=10,
+                astra_id="1",
                 content="FAQ content",
             ),
             Section(
                 name="History",
                 type="heading",
-                start_position=20,
-                end_position=30,
+                astra_id="2",
                 content="History content",
             ),
             Section(
                 name="Conclusion",
                 type="heading",
-                start_position=40,
-                end_position=50,
+                astra_id="3",
                 content="End",
             ),
         ],
     )
 
-    analysis = {
-        "weaknesses": ["The FAQ section is missing details."],
-        "suggestions": ["Add more content to the History section."],
-    }
+    analysis = AnalysisResult(
+        weaknesses=["The FAQ section is missing details."],
+        suggestions=["Add more content to the History section."],
+    )
 
     plan = build_update_plan(article, analysis)
 
@@ -72,25 +70,23 @@ def test_build_update_plan_outdated_evergreen_and_confidences() -> None:
             Section(
                 name="Statistics",
                 type="heading",
-                start_position=0,
-                end_position=10,
+                astra_id="1",
                 content="Stats",
             ),
             Section(
                 name="Foundations",
                 type="heading",
-                start_position=10,
-                end_position=20,
+                astra_id="2",
                 content="Basics",
             ),
         ],
     )
 
-    analysis = {
-        "weaknesses": ["The Statistics section contains outdated numbers from past years."],
-        "strengths": ["Foundations section is evergreen and accurate."],
-        "confidence_scores": {"Statistics": 96, "Foundations": 100},
-    }
+    analysis = AnalysisResult(
+        weaknesses=["The Statistics section contains outdated numbers from past years."],
+        strengths=["Foundations section is evergreen and accurate."],
+        confidence_scores={"Statistics": 96, "Foundations": 100},
+    )
 
     plan = build_update_plan(article, analysis)
     assert len(plan.actions) == 2

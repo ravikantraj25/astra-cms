@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import re
+import uuid
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 from app.domain.article import Article, Section
+
+
+def _generate_astra_id() -> str:
+    return f"astra-{uuid.uuid4().hex[:8]}"
 
 
 def detect_sections(article: Article) -> Article:
     """Detect semantic sections within an Article.
 
-    Populates the `sections` field of the Article based on rule-based heuristics.
+    Populates the `sections` field of the Article by tagging DOM nodes
+    with unique `data-astra-id` attributes and updating `raw_html`.
     """
     if not article.raw_html:
         return article
@@ -20,61 +26,48 @@ def detect_sections(article: Article) -> Article:
     soup = BeautifulSoup(article.raw_html, "html.parser")
     sections: list[Section] = []
 
-    # Track the current search position in raw_html to find accurate offsets
-    search_pos = 0
-
-    def find_position(text_snippet: str, start_search: int = 0) -> int:
-        """Find the character index of a text snippet in the raw HTML."""
-        if not text_snippet:
-            return -1
-        # Try to find the exact text in the raw HTML
-        idx = article.raw_html.find(text_snippet, start_search)
-        if idx != -1:
-            return idx
-        return -1
+    def _mark_and_create_section(
+        element: Tag, name: str, sec_type: str, content_html: str
+    ) -> None:
+        astra_id = _generate_astra_id()
+        element["data-astra-id"] = astra_id
+        sections.append(
+            Section(
+                name=name,
+                type=sec_type,
+                astra_id=astra_id,
+                content=content_html,
+            )
+        )
 
     # 1. Semantic Sections (based on headings)
-    # We will iterate through all top-level elements or just headings to find sections
-    # A section is defined by a heading and all its following siblings
-    # until the next heading of same or higher level.
     headings = soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
 
-    # Introduction: Everything before the first h2/h3
+    # Introduction: Wrap everything before the first h2/h3 in a div if needed,
+    # or just tag the first element. To be safe and preserve all nodes (including text),
+    # we will wrap intro siblings in a <div class="astra-intro-wrapper">.
     first_major_heading = soup.find(["h2", "h3"])
     if first_major_heading:
-        intro_content = []
+        intro_siblings = []
         for sibling in first_major_heading.previous_siblings:
-            if isinstance(sibling, Tag) and sibling.name not in ["h1"]:
-                intro_content.append(str(sibling))
-        intro_content.reverse()
-        intro_html = "".join(intro_content).strip()
-        if intro_html:
-            start_idx = 0
-            end_idx = find_position(first_major_heading.text)
-            if end_idx == -1:
-                end_idx = len(intro_html)
-            sections.append(
-                Section(
-                    name="Introduction",
-                    type="introduction",
-                    start_position=start_idx,
-                    end_position=end_idx,
-                    content=intro_html,
-                )
+            if isinstance(sibling, Tag) and sibling.name in ["h1"]:
+                continue
+            intro_siblings.append(sibling)
+        intro_siblings.reverse()
+        
+        if intro_siblings:
+            wrapper = soup.new_tag("div")
+            wrapper["class"] = "astra-wrapper"
+            # Insert wrapper before the first sibling
+            intro_siblings[0].insert_before(wrapper)
+            for sib in intro_siblings:
+                wrapper.append(sib)
+            
+            _mark_and_create_section(
+                wrapper, "Introduction", "introduction", str(wrapper)
             )
 
-    # Helper to extract content until next heading
-    def extract_section_content(heading: Tag) -> str:
-        content = []
-        for sibling in heading.next_siblings:
-            if isinstance(sibling, Tag) and sibling.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
-                # Stop if it's a heading of same or higher level
-                if int(sibling.name[1]) <= int(heading.name[1]):
-                    break
-            if isinstance(sibling, Tag):
-                content.append(str(sibling))
-        return "".join(content).strip()
-
+    # For headings, we will wrap the heading and its content in a div to preserve all nodes
     for h in headings:
         text = h.text.lower()
         sec_name = None
@@ -100,95 +93,53 @@ def detect_sections(article: Article) -> Article:
             sec_type = "conclusion"
 
         if sec_name and sec_type:
-            content = extract_section_content(h)
-            start_idx = find_position(h.text, search_pos)
-            if start_idx != -1:
-                search_pos = start_idx
-            else:
-                start_idx = 0
+            # We want to wrap the heading and all siblings until the next heading of same/higher level
+            content_nodes = [h]
+            for sibling in h.next_siblings:
+                if isinstance(sibling, Tag) and sibling.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+                    if int(sibling.name[1]) <= int(h.name[1]):
+                        break
+                content_nodes.append(sibling)
+            
+            wrapper = soup.new_tag("div")
+            wrapper["class"] = "astra-wrapper"
+            content_nodes[0].insert_before(wrapper)
+            for node in content_nodes:
+                wrapper.append(node)
+                
+            _mark_and_create_section(wrapper, sec_name, sec_type, str(wrapper))
 
-            end_idx = start_idx + len(content) + len(h.text)
-
-            sections.append(
-                Section(
-                    name=sec_name,
-                    type=sec_type,
-                    start_position=start_idx,
-                    end_position=end_idx,
-                    content=content,
-                )
-            )
-
-    # 2. Date Section
-    # Look for <time> tags or paragraphs with
-    # date patterns
+    # 2. Date Section (look for <time> or regex in <p>)
     date_pattern = re.compile(
-        r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)" r"[a-z]* \d{1,2},? \d{4}\b",
+        r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b",
         re.IGNORECASE,
     )
     for p in soup.find_all(["p", "time"]):
         if date_pattern.search(p.text):
-            start_idx = find_position(p.text)
-            sections.append(
-                Section(
-                    name="Date Section",
-                    type="date_section",
-                    start_position=max(0, start_idx),
-                    end_position=max(0, start_idx) + len(p.text),
-                    content=str(p),
-                )
-            )
+            _mark_and_create_section(p, "Date Section", "date_section", str(p))
 
     # 3. Media (Images and Videos)
     for img in soup.find_all("img"):
-        src = str(img.get("src", ""))
         alt = str(img.get("alt", "Image"))
-        start_idx = find_position(src)
-        sections.append(
-            Section(
-                name=f"Image: {alt}",
-                type="image",
-                start_position=max(0, start_idx),
-                end_position=max(0, start_idx) + len(str(img)),
-                content=str(img),
-            )
-        )
+        _mark_and_create_section(img, f"Image: {alt}", "image", str(img))
 
     for vid in soup.find_all(["video", "iframe"]):
         src = str(vid.get("src", ""))
         if vid.name == "iframe" and "youtube" not in src.lower() and "vimeo" not in src.lower():
             continue
-        start_idx = find_position(src)
-        sections.append(
-            Section(
-                name="Video",
-                type="video",
-                start_position=max(0, start_idx),
-                end_position=max(0, start_idx) + len(str(vid)),
-                content=str(vid),
-            )
-        )
+        _mark_and_create_section(vid, "Video", "video", str(vid))
 
     # 4. Links (External / Internal)
     for a in soup.find_all("a"):
         href = str(a.get("href", ""))
         if not href:
             continue
-
         is_external = href.startswith("http")
         link_type = "external_link" if is_external else "internal_link"
         name = "External Link" if is_external else "Internal Link"
-
-        start_idx = find_position(a.text)
-        sections.append(
-            Section(
-                name=f"{name}: {a.text.strip()}",
-                type=link_type,
-                start_position=max(0, start_idx),
-                end_position=max(0, start_idx) + len(str(a)),
-                content=str(a),
-            )
-        )
+        _mark_and_create_section(a, f"{name}: {a.text.strip()}", link_type, str(a))
 
     article.sections = sections
+    # VERY IMPORTANT: update raw_html to include the injected data-astra-id attributes!
+    article.raw_html = str(soup)
     return article

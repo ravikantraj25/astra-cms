@@ -148,4 +148,6 @@ def auto_update(
     except Exception as err:
         console.print()
         console.print(f"  [red]✘ Batch Processing Failed:[/red] {err}")
-        raise typer.Exit(code=1) from err
+        if settings.is_debug:
+            raise err
+        raise typer.Exit(code=1)

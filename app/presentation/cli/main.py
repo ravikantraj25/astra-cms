@@ -191,13 +191,13 @@ def analyze_html(
     table = Table(show_header=True, header_style="bold magenta", padding=(0, 2), box=None)
     table.add_column("Type", style="cyan", min_width=16)
     table.add_column("Name", style="white")
-    table.add_column("Pos (Start-End)", style="dim")
+    table.add_column("Astra ID", style="dim")
 
     for section in article.sections:
         table.add_row(
             section.type,
             section.name,
-            f"{section.start_position}-{section.end_position}",
+            section.astra_id,
         )
 
     console.print(
@@ -408,8 +408,17 @@ def generate_plan(
         console.print(f"  [red]✘ File not found:[/red] [dim]{article_path}[/dim]")
         raise typer.Exit(code=1) from err
 
+    from app.domain.plan import AnalysisResult
+
     article = detect_sections(article)
-    plan = build_update_plan(article, analysis_data)
+
+    try:
+        analysis = AnalysisResult.model_validate(analysis_data)
+    except Exception as err:
+        console.print(f"  [red]✘ Invalid Analysis Schema:[/red] {err}")
+        raise typer.Exit(code=1) from err
+
+    plan = build_update_plan(article, analysis)
 
     output_dir = analysis_path.parent
     output_file = output_dir / "update_plan.json"

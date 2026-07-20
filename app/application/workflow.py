@@ -18,6 +18,7 @@ def run_analysis_workflow(
     wp_client: WordPressClient,
     ai_provider: AIProvider,
     output_dir: Path,
+    custom_instructions: str | None = None,
 ) -> dict[str, Path]:
     """Execute the complete content analysis pipeline.
 
@@ -43,11 +44,10 @@ def run_analysis_workflow(
     artifacts: dict[str, Path] = {}
 
     # 1. Fetch post
-    with wp_client:
-        post = wp_client.get_post(post_id).post
+    post = wp_client.get_post(post_id).post
 
     # 2. Save raw HTML
-    html_path = output_dir / f"post_{post_id}.html"
+    html_path = output_dir / "original.html"
     html_path.write_text(post.content_html, encoding="utf-8")
     artifacts["html"] = html_path
 
@@ -61,41 +61,50 @@ def run_analysis_workflow(
     artifacts["article"] = article_path
 
     # 5. Generate prompt and save
-    prompt = build_analysis_prompt(article)
+    prompt = build_analysis_prompt(article, custom_instructions=custom_instructions)
     prompt_path = output_dir / "prompt.txt"
     prompt_path.write_text(prompt, encoding="utf-8")
     artifacts["prompt"] = prompt_path
 
-    # 6. Generate AI response
-    response_text = ai_provider.generate(prompt)
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # 6. Generate AI response (with 1 retry for JSON validity)
+    max_retries = 1
+    analysis_data = None
+    analysis_result = None
 
-    # Clean markdown
-    clean_text = response_text.strip()
-    if clean_text.startswith("```json"):
-        clean_text = clean_text[7:]
-    elif clean_text.startswith("```"):
-        clean_text = clean_text[3:]
-    if clean_text.endswith("```"):
-        clean_text = clean_text[:-3]
-    clean_text = clean_text.strip()
+    for attempt in range(max_retries + 1):
+        response_text = ai_provider.generate(prompt)
 
-    # Try parsing it to ensure it's valid JSON
-    try:
-        analysis_data = json.loads(clean_text)
-    except json.JSONDecodeError:
-        analysis_data = {"raw_output": clean_text}
+        # Clean markdown
+        clean_text = response_text.strip()
+        if clean_text.startswith("```json"):
+            clean_text = clean_text[7:]
+        elif clean_text.startswith("```"):
+            clean_text = clean_text[3:]
+        if clean_text.endswith("```"):
+            clean_text = clean_text[:-3]
+        clean_text = clean_text.strip()
+
+        try:
+            analysis_data = json.loads(clean_text)
+            from app.domain.plan import AnalysisResult
+            analysis_result = AnalysisResult.model_validate(analysis_data)
+            break
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Failed to parse AI output as JSON (attempt {attempt + 1}): {e}")
+            logger.warning(f"Raw AI response:\n{response_text}")
+            if attempt == max_retries:
+                raise ValueError(f"AI failed to return valid JSON after {max_retries + 1} attempts.\nRaw Response: {response_text}") from e
 
     # 7. Save analysis.json
     analysis_path = output_dir / "analysis.json"
-    analysis_path.write_text(json.dumps(analysis_data, indent=2), encoding="utf-8")
+    analysis_path.write_text(analysis_result.model_dump_json(indent=2), encoding="utf-8")
     artifacts["analysis"] = analysis_path
 
     # 8. Build update plan
-    # If the response was not a dict mapping string to list of strings, it might fail.
-    # The planner expects dict[str, list[str]].
-    if not isinstance(analysis_data, dict):
-        analysis_data = {"raw_output": [str(analysis_data)]}
-    plan = build_update_plan(article, analysis_data)
+    plan = build_update_plan(article, analysis_result, custom_instructions=custom_instructions)
 
     # 9. Save update_plan.json
     plan_path = output_dir / "update_plan.json"

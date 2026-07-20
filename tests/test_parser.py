@@ -44,7 +44,7 @@ def test_parse_html_string(sample_html: str) -> None:
     article = parse_html_string(sample_html)
 
     assert isinstance(article, Article)
-    assert article.title == "Test Title from tag"
+    assert article.title == "Test Title"  # Prefer h1 over <title>
     assert article.meta_description == "This is a test description."
     assert article.headings == ["Test Title", "Subheading"]
     assert article.paragraphs == [
@@ -78,8 +78,8 @@ def test_parse_html_string(sample_html: str) -> None:
 
 
 def test_parse_html_string_fallback_title() -> None:
-    """It should fallback to the first h1 if no title tag exists."""
-    html = "<body><h1>Fallback Title</h1></body>"
+    """It should fallback to the <title> if no h1 exists."""
+    html = "<head><title>Fallback Title</title></head><body></body>"
     article = parse_html_string(html)
     assert article.title == "Fallback Title"
 
@@ -90,7 +90,7 @@ def test_parse_html_file(tmp_path: Path, sample_html: str) -> None:
     file_path.write_text(sample_html, encoding="utf-8")
 
     article = parse_html_file(file_path)
-    assert article.title == "Test Title from tag"
+    assert article.title == "Test Title"
 
 
 def test_parse_html_file_not_found(tmp_path: Path) -> None:
@@ -99,3 +99,24 @@ def test_parse_html_file_not_found(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError):
         parse_html_file(file_path)
+
+
+def test_parse_html_string_wp_block_post_title() -> None:
+    """It should prefer wp-block-post-title over title tag."""
+    html = '<head><title>Tag Title</title></head><body><div class="wp-block-post-title">WP Block Title</div></body>'
+    article = parse_html_string(html)
+    assert article.title == "WP Block Title"
+
+
+def test_parse_html_string_entry_title() -> None:
+    """It should prefer entry-title over title tag."""
+    html = '<head><title>Tag Title</title></head><body><h2 class="entry-title">Entry Title</h2></body>'
+    article = parse_html_string(html)
+    assert article.title == "Entry Title"
+
+
+def test_parse_html_string_post_title() -> None:
+    """It should prefer post-title over title tag."""
+    html = '<head><title>Tag Title</title></head><body><span class="post-title">Post Title</span></body>'
+    article = parse_html_string(html)
+    assert article.title == "Post Title"

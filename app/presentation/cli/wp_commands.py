@@ -400,3 +400,73 @@ def update_draft(
 
     finally:
         client.close()
+
+
+@wp_app.command(name="whoami")
+def whoami() -> None:
+    """Print the currently authenticated WordPress user information.
+
+    Examples::
+
+        astra wp whoami
+    """
+    settings = _ensure_configured()
+
+    console.print()
+    console.print("  [dim]Fetching authenticated user info...[/dim]")
+
+    client = _create_client(settings)
+
+    try:
+        client.connect()
+        console.print("  [green]✔ Connected[/green]")
+        console.print()
+
+        me_req = client._ensure_connected().build_request("GET", f"{settings.base_url}/wp-json/wp/v2/users/me")
+        me_resp = client._ensure_connected().send(me_req)
+        
+        if not me_resp.is_success:
+            console.print(f"  [red]✘ Failed to fetch /users/me: {me_resp.status_code} - {me_resp.text}[/red]")
+            raise typer.Exit(code=1)
+            
+        me_data = me_resp.json()
+
+        table = Table(show_header=False, padding=(0, 2), box=None)
+        table.add_column("Key", style="bold cyan", min_width=16)
+        table.add_column("Value", style="white")
+
+        table.add_row("ID", str(me_data.get("id")))
+        table.add_row("Username", str(me_data.get("slug")))
+        table.add_row("Name", str(me_data.get("name")))
+        table.add_row("Roles", ", ".join(me_data.get("roles", [])) or "None")
+        
+        # Format capabilities if they exist
+        caps = me_data.get("capabilities", {})
+        if caps:
+            # Just show a summary or the first few
+            active_caps = [k for k, v in caps.items() if v is True]
+            if len(active_caps) > 5:
+                caps_str = ", ".join(active_caps[:5]) + f" (+{len(active_caps)-5} more)"
+            else:
+                caps_str = ", ".join(active_caps)
+        else:
+            caps_str = "None"
+            
+        table.add_row("Capabilities", caps_str)
+
+        console.print(
+            Panel(
+                table,
+                border_style="bright_blue",
+                title=f"[bold]{APP_NAME}[/bold] — Authenticated User",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+
+    except WordPressError as exc:
+        _handle_wp_error(exc)
+        raise typer.Exit(code=1) from exc
+
+    finally:
+        client.close()

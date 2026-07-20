@@ -40,6 +40,18 @@ class GroqProvider(AIProvider):
             },
         )
 
+        if response.status_code >= 400:
+            import json
+            print(f"\nHTTP {response.status_code}\n\nResponse:\n")
+            try:
+                error_data = response.json()
+                print(json.dumps(error_data, indent=2))
+                error_msg = json.dumps(error_data)
+            except Exception:
+                print(response.text)
+                error_msg = response.text
+            raise RuntimeError(f"Groq API Error: {error_msg}")
+
         response.raise_for_status()
         data = response.json()
 

@@ -167,7 +167,7 @@ class WordPressClient:
             AuthenticationError: If the credentials are invalid.
             WordPressError: On any other API failure.
         """
-        data = self._request("GET", f"{_WP_V2_PATH}/users/me", params={"context": "edit"})
+        data = self._request("GET", f"{_WP_V2_PATH}/users/me")
         return WPUser.model_validate(data)
 
     def health_check(self) -> WPHealthCheck:
@@ -331,11 +331,74 @@ class WordPressClient:
         if content is not None:
             body["content"] = content
 
-        data = self._request(
-            "POST",
-            f"{_WP_V2_PATH}/posts/{post_id}",
-            json_body=body,
-        )
+        # Deep Diagnostics for Publisher
+        print("\n--- DEEP DIAGNOSTICS: PUBLISHER START ---")
+        client = self._ensure_connected()
+        endpoint = f"{self._base_url}{_WP_V2_PATH}/posts/{post_id}"
+        
+        # Build the request to get actual headers
+        req = client.build_request("POST", endpoint, json=body)
+        
+        # 1. Print request details
+        print(f"REST endpoint: {endpoint}")
+        print(f"HTTP method: POST")
+        print(f"Post ID: {post_id}")
+        print(f"Authenticated username: {self._username}")
+        
+        # Mask Authorization
+        headers_dict = dict(req.headers)
+        if "authorization" in headers_dict:
+            headers_dict["authorization"] = "MASKED"
+        print(f"Request headers: {headers_dict}")
+        
+        # Truncate content
+        content_trunc = content[:200] + "..." if content and len(content) > 200 else content
+        diag_body = dict(body)
+        if "content" in diag_body:
+            diag_body["content"] = content_trunc
+        print(f"JSON payload: {diag_body}")
+        
+        # 2. Call GET /users/me
+        print("\n--- DIAGNOSTICS: FETCHING /users/me ---")
+        try:
+            me_req = client.build_request("GET", f"{self._base_url}{_WP_V2_PATH}/users/me")
+            me_resp = client.send(me_req)
+            if me_resp.is_success:
+                me_data = me_resp.json()
+                print(f"ID: {me_data.get('id')}")
+                print(f"username: {me_data.get('slug')}")
+                print(f"name: {me_data.get('name')}")
+                print(f"roles: {me_data.get('roles')}")
+                print(f"capabilities: {me_data.get('capabilities')}")
+            else:
+                print(f"Failed to fetch /users/me: {me_resp.status_code} - {me_resp.text}")
+        except Exception as e:
+            print(f"Error fetching /users/me: {e}")
+            
+        print("--- DEEP DIAGNOSTICS: END PRE-FLIGHT ---\n")
+
+        try:
+            # We send the request manually to catch the raw response
+            response = client.send(req)
+            self._check_response_status(response)
+            data = self._parse_json(response)
+        except Exception as e:
+            # 3. If request fails
+            print("\n--- DEEP DIAGNOSTICS: PUBLISH FAILED ---")
+            if 'response' in locals() and hasattr(response, 'status_code'):
+                print(f"HTTP status: {response.status_code}")
+                print(f"Full response body: {response.text}")
+                try:
+                    err_json = response.json()
+                    print(f"Parsed JSON error code: {err_json.get('code')}")
+                    print(f"Parsed JSON error message: {err_json.get('message')}")
+                except Exception:
+                    print("Failed to parse JSON error.")
+            else:
+                print("No response object available.")
+            print("------------------------------------------\n")
+            raise
+
         return WPPost.from_api_response(data)
 
     # ── Private helpers ──────────────────────────────────────────────────────

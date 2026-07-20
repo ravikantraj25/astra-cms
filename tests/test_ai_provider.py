@@ -26,6 +26,7 @@ def test_groq_provider_generate_success() -> None:
     settings = GroqSettings(api_key=SecretStr("test_key"))
     mock_client = MagicMock(spec=httpx.Client)
     mock_response = MagicMock()
+    mock_response.status_code = 200
     mock_response.json.return_value = {"choices": [{"message": {"content": "Test response"}}]}
     mock_client.post.return_value = mock_response
 
@@ -36,7 +37,7 @@ def test_groq_provider_generate_success() -> None:
     mock_client.post.assert_called_once_with(
         "/chat/completions",
         json={
-            "model": "llama3-8b-8192",
+            "model": settings.model,
             "messages": [{"role": "user", "content": "Test prompt"}],
             "temperature": 0.7,
         },
@@ -48,6 +49,7 @@ def test_groq_provider_generate_no_choices() -> None:
     settings = GroqSettings(api_key=SecretStr("test_key"))
     mock_client = MagicMock(spec=httpx.Client)
     mock_response = MagicMock()
+    mock_response.status_code = 200
     mock_response.json.return_value = {"choices": []}
     mock_client.post.return_value = mock_response
 

@@ -135,32 +135,73 @@ def run_batch_workflow(
                 on_progress(post.id, f"Processing post #{post.id} ({post.title})...")
 
             result = PostBatchResult(post_id=post.id, title=post.title)
+            
+            post_dir = output_dir / f"post_{post.id}"
+            post_dir.mkdir(parents=True, exist_ok=True)
+            log_file = post_dir / "log.txt"
+            
+            fh = logging.FileHandler(log_file, encoding="utf-8")
+            fh.setLevel(logging.INFO)
+            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            fh.setFormatter(formatter)
+            
+            root_logger = logging.getLogger()
+            root_logger.addHandler(fh)
 
             try:
+                logger.info(f"--- Starting processing for post #{post.id} ({post.title}) ---")
+                
                 if on_progress:
                     on_progress(post.id, f"Analyzing post #{post.id} with AI...")
+                logger.info("Step 1: Fetch")
+                logger.info("Step 2: Analyze")
+                logger.info("Step 3: Plan")
+                
                 artifacts = run_analysis_workflow(
                     post_id=post.id,
                     wp_client=wp_client,
                     ai_provider=ai_provider,
-                    output_dir=output_dir,
+                    output_dir=post_dir,
                 )
 
                 if on_progress:
                     on_progress(post.id, f"Generating updated HTML for post #{post.id}...")
+                logger.info("Step 4: Generate")
                 article = parse_html_file(artifacts["html"])
                 article = detect_sections(article)
                 plan_data = json.loads(artifacts["plan"].read_text(encoding="utf-8"))
                 plan = UpdatePlan.model_validate(plan_data)
 
                 updated_html, _ = generate_updated_article(article, plan, ai_provider)
-                updated_file = output_dir / f"post_{post.id}_updated.html"
+                updated_file = post_dir / "generated.html"
                 updated_file.write_text(updated_html, encoding="utf-8")
+                
+                from app.application.quality_validator import QualityValidator
+                
+                if on_progress:
+                    on_progress(post.id, f"Validating updated HTML for post #{post.id}...")
+                logger.info("Step 5: Validate")
+                
+                original_html = artifacts["html"].read_text(encoding="utf-8")
+                validation_report = QualityValidator.validate(original_html, updated_html)
+                validation_file = post_dir / "validation_report.json"
+                validation_file.write_text(validation_report.model_dump_json(indent=2), encoding="utf-8")
 
+                if not validation_report.ready_to_publish:
+                    logger.error("Validation failed. Halting processing for this post.")
+                    raise RuntimeError(f"Quality validation failed for post #{post.id}.")
+                
+                print("Quality Gate Passed")
+                if on_progress:
+                    on_progress(post.id, "Quality Gate Passed.")
+                logger.info("Quality Gate Passed")
+
+                logger.info("Step 6: Publish")
                 if dry_run:
                     result.status = "success"
                     result.draft_url = "N/A (dry-run)"
                     report.successful += 1
+                    logger.info("Dry run: Skipping WordPress publish.")
                 else:
                     if on_progress:
                         on_progress(post.id, f"Publishing draft for post #{post.id}...")
@@ -173,15 +214,31 @@ def run_batch_workflow(
                     result.draft_url = updated_post.link
                     report.draft_urls.append(updated_post.link)
                     report.successful += 1
+                    logger.info(f"Successfully published draft: {updated_post.link}")
 
             except Exception as err:
-                logger.error(f"Failed processing post #{post.id}: {err}")
+                logger.error(f"Failed processing post #{post.id}: {err}", exc_info=True)
                 result.status = "failed"
                 result.error_message = str(err)
                 report.failed += 1
+            
+            finally:
+                root_logger.removeHandler(fh)
+                fh.close()
 
             report.results.append(result)
 
     summary_file = output_dir / "batch_summary_report.json"
     summary_file.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    
+    # Print the requested summary format
+    failed_ids = [str(r.post_id) for r in report.results if r.status == "failed"]
+    print(f"\nProcessed: {report.total_posts}")
+    print(f"Success: {report.successful}")
+    print(f"Failed: {report.failed}")
+    if failed_ids:
+        print("\nFailed IDs:")
+        for fid in failed_ids:
+            print(fid)
+
     return report

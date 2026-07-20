@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 from pydantic import SecretStr
@@ -100,10 +100,10 @@ def test_auto_update_cli_success(
 
 def test_auto_update_cli_unconfigured() -> None:
     """Test that astra auto update exits if credentials are not set."""
-    unconfigured_wp = WordPressSettings()
     with patch(
-        "app.presentation.cli.auto_commands.get_wp_settings",
-        return_value=unconfigured_wp,
+        "app.infrastructure.config.settings.WordPressSettings.is_configured",
+        new_callable=PropertyMock,
+        return_value=False,
     ):
         result = runner.invoke(cli, ["auto", "update"])
 

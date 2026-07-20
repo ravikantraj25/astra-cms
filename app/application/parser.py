@@ -37,14 +37,16 @@ def parse_html_string(html: str) -> Article:
     """
     soup = BeautifulSoup(html, "html.parser")
 
-    # Extract title (prefer <title> tag, fallback to first <h1>)
+    # Extract title (prefer visible H1 or WP specific classes over <title> tag)
     title = ""
-    if soup.title and soup.title.string:
+    title_tag = soup.find(
+        lambda tag: tag.name == "h1" or 
+        any(c in tag.get("class", []) for c in ["wp-block-post-title", "entry-title", "post-title"])
+    )
+    if title_tag and title_tag.text:
+        title = title_tag.text.strip()
+    elif soup.title and soup.title.string:
         title = soup.title.string.strip()
-    else:
-        h1 = soup.find("h1")
-        if h1 and h1.text:
-            title = h1.text.strip()
 
     # Extract meta description
     meta_description = ""

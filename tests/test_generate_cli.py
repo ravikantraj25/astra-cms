@@ -36,7 +36,7 @@ def test_generate_html_success(
     monkeypatch.chdir(tmp_path)
 
     # Create dummy article
-    article_html = "<h1>Title</h1>\n<p>Original Intro</p>"
+    article_html = '<h1>Title</h1>\n<p data-astra-id="1">Original Intro</p>'
     article_file = tmp_path / "post_123.html"
     article_file.write_text(article_html, encoding="utf-8")
 
@@ -75,8 +75,7 @@ def test_generate_html_success(
                 Section(
                     name="Introduction",
                     type="Paragraph",
-                    start_position=15,  # after <h1>Title</h1>\n
-                    end_position=36,
+                    astra_id="1",
                     content="<p>Original Intro</p>",
                 )
             ],

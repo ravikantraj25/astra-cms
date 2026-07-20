@@ -40,9 +40,10 @@ def mock_ai_provider() -> MagicMock:
     provider = MagicMock()
     # Mocking the AI response with a valid JSON that planner will parse
     ai_response = {
+        "strengths": ["Test paragraph"],
         "weaknesses": ["Test paragraph"],
         "suggestions": ["Improve this"],
-        "seo_score": 85,
+        "confidence_scores": {"Test paragraph": 85},
     }
     provider.generate.return_value = f"```json\n{json.dumps(ai_response)}\n```"
     return provider
@@ -72,7 +73,7 @@ def test_run_analysis_workflow_success(
     assert "analysis" in artifacts
     assert "plan" in artifacts
 
-    assert (tmp_path / f"post_{post_id}.html").exists()
+    assert (tmp_path / "original.html").exists()
     assert (tmp_path / "article.json").exists()
     assert (tmp_path / "prompt.txt").exists()
     assert (tmp_path / "analysis.json").exists()
@@ -86,18 +87,13 @@ def test_run_analysis_workflow_success(
 def test_run_analysis_workflow_invalid_json(
     mock_wp_client: MagicMock, mock_ai_provider: MagicMock, tmp_path: Path
 ) -> None:
-    """Test workflow handles invalid JSON gracefully."""
+    """Test workflow raises ValueError on invalid JSON after retries."""
     mock_ai_provider.generate.return_value = "This is not json"
 
-    artifacts = run_analysis_workflow(
-        post_id=123,
-        wp_client=mock_wp_client,
-        ai_provider=mock_ai_provider,
-        output_dir=tmp_path,
-    )
-
-    assert (tmp_path / "analysis.json").exists()
-    analysis_data = json.loads(artifacts["analysis"].read_text(encoding="utf-8"))
-
-    # It should fallback to a dictionary with a raw_output key
-    assert analysis_data["raw_output"] == "This is not json"
+    with pytest.raises(ValueError, match="AI failed to return valid JSON"):
+        run_analysis_workflow(
+            post_id=123,
+            wp_client=mock_wp_client,
+            ai_provider=mock_ai_provider,
+            output_dir=tmp_path,
+        )

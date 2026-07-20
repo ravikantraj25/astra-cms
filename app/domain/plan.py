@@ -15,9 +15,29 @@ class UpdateAction(BaseModel):
     action: str = Field(description="The action to perform (Update, Skip, Delete).")
 
 
+class AnalysisResult(BaseModel):
+    """The strictly typed analysis output from the AI."""
+
+    new_title: str | None = Field(default=None, description="Suggested updated title for the article, if any.")
+    strengths: list[str] = Field(default_factory=list, description="List of evergreen strengths.")
+    weaknesses: list[str] = Field(default_factory=list, description="List of outdated elements.")
+    suggestions: list[str] = Field(default_factory=list, description="Targeted improvement suggestions.")
+    confidence_scores: dict[str, int] = Field(
+        default_factory=dict, description="Confidence scores per section."
+    )
+
+
 class UpdatePlan(BaseModel):
     """The complete content update plan."""
 
+    new_title: str | None = Field(
+        default=None,
+        description="Optional new title for the WordPress post.",
+    )
+    custom_instructions: str | None = Field(
+        default=None,
+        description="Optional custom instructions injected during analysis.",
+    )
     actions: list[UpdateAction] = Field(
         default_factory=list,
         description="List of actions to perform on the article.",
