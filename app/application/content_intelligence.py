@@ -1,26 +1,22 @@
 """Application service for Content Intelligence analysis."""
 
-import json
 import logging
-import re
-from pydantic import ValidationError
 from bs4 import BeautifulSoup
 
-from app.domain.ai import AIProvider, AIError
+from app.domain.ai import AIProvider
 from app.domain.article import Article
-from app.domain.intelligence import ArticleAnalysis
-from app.application.intelligence_prompt import build_intelligence_prompt
+from app.domain.intelligence import ArticleAnalysis, EditingPolicy
+
+# Import specialized analyzers
+from app.application.analyzers.classifier import ArticleClassifier
+from app.application.analyzers.temporal import TemporalAnalyzer
+from app.application.analyzers.historical import HistoricalAnalyzer
+from app.application.analyzers.structural import StructuralAnalyzer
+from app.application.analyzers.event import EventAnalyzer
+from app.application.analyzers.risk import RiskAnalyzer
+from app.application.analyzers.metadata import MetadataAnalyzer
 
 logger = logging.getLogger(__name__)
-
-_MAX_RETRIES = 3
-
-
-def _strip_markdown_fences(text: str) -> str:
-    """Remove markdown code blocks (e.g., ```json ... ```) from text."""
-    clean = re.sub(r"^```(?:json)?", "", text, flags=re.MULTILINE)
-    clean = re.sub(r"```$", "", clean, flags=re.MULTILINE)
-    return clean.strip()
 
 
 class ContentIntelligenceAnalyzer:
@@ -29,6 +25,13 @@ class ContentIntelligenceAnalyzer:
     def __init__(self, ai_provider: AIProvider) -> None:
         """Initialize the analyzer with an AI provider."""
         self.ai_provider = ai_provider
+        self.classifier = ArticleClassifier(ai_provider)
+        self.temporal_analyzer = TemporalAnalyzer(ai_provider)
+        self.historical_analyzer = HistoricalAnalyzer(ai_provider)
+        self.structural_analyzer = StructuralAnalyzer(ai_provider)
+        self.event_analyzer = EventAnalyzer(ai_provider)
+        self.risk_analyzer = RiskAnalyzer(ai_provider)
+        self.metadata_analyzer = MetadataAnalyzer(ai_provider)
 
     def analyze(self, article: Article) -> ArticleAnalysis:
         """Analyze the article and return structured intelligence.
@@ -38,9 +41,6 @@ class ContentIntelligenceAnalyzer:
 
         Returns:
             A populated ArticleAnalysis object.
-
-        Raises:
-            AIError: If the AI provider fails to return valid JSON after retries.
         """
         logger.info("Extracting raw text for content intelligence analysis.")
         
@@ -48,35 +48,59 @@ class ContentIntelligenceAnalyzer:
         soup = BeautifulSoup(article.raw_html, "html.parser")
         article_text = soup.get_text(separator="\n", strip=True)
 
-        prompt = build_intelligence_prompt(article_text)
+        logger.info("Starting specialized analyzers...")
         
-        for attempt in range(_MAX_RETRIES + 1):
-            logger.info("Content Intelligence generation attempt %d/%d", attempt + 1, _MAX_RETRIES + 1)
-            try:
-                response_text = self.ai_provider.generate(prompt)
-                clean_text = _strip_markdown_fences(response_text)
-                
-                # Try to parse as JSON
-                try:
-                    data = json.loads(clean_text)
-                except json.JSONDecodeError as e:
-                    logger.warning("Failed to parse Content Intelligence output as JSON: %s", e)
-                    continue
-                
-                # Try to validate with Pydantic
-                try:
-                    intelligence = ArticleAnalysis.model_validate(data)
-                    logger.info("Successfully generated Content Intelligence.")
-                    return intelligence
-                except ValidationError as e:
-                    logger.warning("Content Intelligence output failed validation: %s", e)
-                    continue
+        # In a high-performance environment, these could be executed concurrently using asyncio.gather.
+        # For simplicity and reliability in this synchronous context, we execute them sequentially.
+        
+        c_res = self.classifier.analyze(article_text)
+        t_res = self.temporal_analyzer.analyze(article_text)
+        h_res = self.historical_analyzer.analyze(article_text)
+        s_res = self.structural_analyzer.analyze(article_text)
+        e_res = self.event_analyzer.analyze(article_text)
+        r_res = self.risk_analyzer.analyze(article_text)
+        m_res = self.metadata_analyzer.analyze(article_text)
+        
+        logger.info("Aggregating specialized analysis into single EditingPolicy...")
+        
+        editing_policy = EditingPolicy(
+            article_type=c_res.article_type,
+            year_policy=t_res.year_policy,
+            date_policy=t_res.date_policy,
+            history_policy=h_res.history_policy,
+            title_policy=m_res.title_policy,
+            image_policy=s_res.image_policy,
+            schema_policy=s_res.schema_policy,
+            faq_policy=s_res.faq_policy,
+            schedule_policy=t_res.schedule_policy,
+            pricing_policy=m_res.pricing_policy,
+            metadata_policy=m_res.metadata_policy,
+            link_policy=s_res.link_policy,
+            location_policy=e_res.location_policy,
+            seo_policy=m_res.seo_policy
+        )
 
-            except AIError as e:
-                logger.error("AIProvider error during Content Intelligence generation: %s", e)
-                # Re-raise on the last attempt
-                if attempt == _MAX_RETRIES:
-                    raise e
-                continue
-                
-        raise AIError(f"Failed to generate valid Content Intelligence after {_MAX_RETRIES + 1} attempts.")
+        required_updates = list(set(
+            c_res.required_updates + t_res.required_updates + h_res.required_updates +
+            s_res.required_updates + e_res.required_updates + r_res.required_updates +
+            m_res.required_updates
+        ))
+
+        forbidden_updates = list(set(
+            c_res.forbidden_updates + t_res.forbidden_updates + h_res.forbidden_updates +
+            s_res.forbidden_updates + e_res.forbidden_updates + r_res.forbidden_updates +
+            m_res.forbidden_updates
+        ))
+
+        return ArticleAnalysis(
+            editing_policy=editing_policy,
+            strategy=c_res.strategy,
+            freshness=c_res.freshness,
+            required_updates=required_updates,
+            forbidden_updates=forbidden_updates,
+            temporal_entities=t_res.entities,
+            historical_facts=h_res.facts,
+            event_info=e_res.events,
+            structural_analysis=s_res.elements,
+            risks=r_res.risks
+        )

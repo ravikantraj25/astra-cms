@@ -28,12 +28,26 @@ def test_generate_plan_success_single_html(
 
     analysis_file = tmp_path / "analysis.json"
     analysis_file.write_text(json.dumps({
-        "article_type": "Annual Event",
+        "strategy": "Selective",
         "freshness": "Recurring Event",
-        "decision": {
-            "strategy": "Selective",
-            "reason": "Because it's an annual event."
+        "editing_policy": {
+            "article_type": "Annual Event",
+            "year_policy": "UPDATE",
+            "date_policy": "UPDATE",
+            "history_policy": "KEEP",
+            "title_policy": "UPDATE",
+            "image_policy": "KEEP",
+            "schema_policy": "KEEP",
+            "faq_policy": "UPDATE",
+            "schedule_policy": "UPDATE",
+            "pricing_policy": "UPDATE",
+            "metadata_policy": "UPDATE",
+            "link_policy": "KEEP",
+            "location_policy": "KEEP",
+            "seo_policy": "UPDATE"
         },
+        "required_updates": [],
+        "forbidden_updates": [],
         "temporal_entities": [],
         "historical_facts": [],
         "event_info": [],

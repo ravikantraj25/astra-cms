@@ -27,6 +27,7 @@ from rich.table import Table
 
 from app import __version__
 from app.application.parser import parse_html_file
+from app.application.content_intelligence import ContentIntelligenceAnalyzer
 from app.presentation.cli.ai_commands import ai_app
 from app.presentation.cli.auto_commands import auto_app
 from app.presentation.cli.workflow_commands import workflow_app
@@ -279,10 +280,8 @@ def analyze_article_ai(
     """Analyze an HTML file using Groq AI and save JSON output."""
     import json
 
-    from app.application.intelligence_prompt import build_intelligence_prompt
     from app.infrastructure.config.settings import get_groq_settings
     from app.infrastructure.providers.groq_provider import GroqProvider
-    from bs4 import BeautifulSoup
 
     try:
         article = parse_html_file(file_path)
@@ -299,32 +298,18 @@ def analyze_article_ai(
     console.print()
     console.print(f"  [dim]Analyzing[/dim] [cyan]{file_path}[/cyan] [dim]with Groq AI...[/dim]")
 
-    soup = BeautifulSoup(article.raw_html, "html.parser")
-    article_text = soup.get_text(separator="\n", strip=True)
-    prompt = build_intelligence_prompt(article_text)
     provider = GroqProvider(settings)
-
+    analyzer = ContentIntelligenceAnalyzer(ai_provider=provider)
+    
     try:
-        response_text = provider.generate(prompt)
-    except (ValueError, RuntimeError) as e:
+        analysis = analyzer.analyze(article)
+    except Exception as e:
         console.print(f"  [red]✘ AI Generation failed:[/red] {e}")
         raise typer.Exit(code=1) from e
 
-    # Clean the response in case the AI added markdown blocks despite instructions
-    clean_text = response_text.strip()
-    if clean_text.startswith("```json"):
-        clean_text = clean_text[7:]
-    elif clean_text.startswith("```"):
-        clean_text = clean_text[3:]
-    if clean_text.endswith("```"):
-        clean_text = clean_text[:-3]
-    clean_text = clean_text.strip()
+    parsed_json = analysis.model_dump()
 
-    try:
-        parsed_json = json.loads(clean_text)
-    except json.JSONDecodeError:
-        console.print("  [yellow]⚠ AI did not return valid JSON. Saving raw output.[/yellow]")
-        parsed_json = {"raw_output": clean_text}
+
 
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)

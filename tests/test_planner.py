@@ -7,7 +7,6 @@ import pytest
 
 from app.domain.ai import AIProvider, AIError
 from app.domain.article import Article, Section
-from app.domain.intelligence import ArticleAnalysis, ArticleType, ContentFreshness, UpdateDecision
 from app.domain.plan import UpdatePlan, ActionType
 from app.application.planner import Planner
 
@@ -28,15 +27,31 @@ def dummy_article():
     )
 
 
+from app.domain.intelligence import ArticleAnalysis, ArticleType, ContentFreshness, UpdateStrategy, EditingPolicy, PolicyAction
+
 @pytest.fixture
 def dummy_intelligence():
     return ArticleAnalysis(
-        article_type=ArticleType.ANNUAL_EVENT,
+        strategy=UpdateStrategy.SELECTIVE,
         freshness=ContentFreshness.RECURRING_EVENT,
-        decision=UpdateDecision(
-            strategy="Selective",
-            reason="It is an annual event."
+        editing_policy=EditingPolicy(
+            article_type=ArticleType.ANNUAL_EVENT,
+            year_policy=PolicyAction.UPDATE,
+            date_policy=PolicyAction.UPDATE,
+            history_policy=PolicyAction.KEEP,
+            title_policy=PolicyAction.UPDATE,
+            image_policy=PolicyAction.KEEP,
+            schema_policy=PolicyAction.KEEP,
+            faq_policy=PolicyAction.UPDATE,
+            schedule_policy=PolicyAction.UPDATE,
+            pricing_policy=PolicyAction.UPDATE,
+            metadata_policy=PolicyAction.UPDATE,
+            link_policy=PolicyAction.KEEP,
+            location_policy=PolicyAction.KEEP,
+            seo_policy=PolicyAction.UPDATE
         ),
+        required_updates=[],
+        forbidden_updates=[],
         temporal_entities=[],
         historical_facts=[],
         event_info=[],

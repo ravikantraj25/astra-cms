@@ -4,32 +4,46 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.application.workflow import run_analysis_workflow
 from app.domain.ai import AITimeoutError, AIError
+from app.domain.intelligence import ArticleAnalysis, ArticleType, ContentFreshness, UpdateStrategy, EditingPolicy, PolicyAction
 from app.infrastructure.wordpress.exceptions import WordPressError
 from app.infrastructure.wordpress.models import WPPost, WPPostDetail
 
 
-def get_valid_intelligence_response() -> str:
-    """Helper to return valid JSON for Content Intelligence."""
-    ai_response = {
-        "article_type": "Annual Event",
-        "freshness": "Recurring Event",
-        "decision": {
-            "strategy": "Selective",
-            "reason": "Because it's an annual event."
-        },
-        "temporal_entities": [],
-        "historical_facts": [],
-        "event_info": [],
-        "structural_analysis": [],
-        "risks": []
-    }
-    return f"```json\n{json.dumps(ai_response)}\n```"
+@pytest.fixture
+def dummy_intelligence():
+    return ArticleAnalysis(
+        strategy=UpdateStrategy.SELECTIVE,
+        freshness=ContentFreshness.RECURRING_EVENT,
+        editing_policy=EditingPolicy(
+            article_type=ArticleType.ANNUAL_EVENT,
+            year_policy=PolicyAction.UPDATE,
+            date_policy=PolicyAction.UPDATE,
+            history_policy=PolicyAction.KEEP,
+            title_policy=PolicyAction.UPDATE,
+            image_policy=PolicyAction.KEEP,
+            schema_policy=PolicyAction.KEEP,
+            faq_policy=PolicyAction.UPDATE,
+            schedule_policy=PolicyAction.UPDATE,
+            pricing_policy=PolicyAction.UPDATE,
+            metadata_policy=PolicyAction.UPDATE,
+            link_policy=PolicyAction.KEEP,
+            location_policy=PolicyAction.KEEP,
+            seo_policy=PolicyAction.UPDATE
+        ),
+        required_updates=[],
+        forbidden_updates=[],
+        temporal_entities=[],
+        historical_facts=[],
+        event_info=[],
+        structural_analysis=[],
+        risks=[],
+    )
 
 
 def get_valid_planner_response() -> str:
@@ -79,19 +93,25 @@ def mock_wp_client() -> MagicMock:
 def mock_ai_provider() -> MagicMock:
     """Mock AI Provider."""
     provider = MagicMock()
-    # It gets called twice: first for intelligence, second for planner.
-    provider.generate.side_effect = [
-        get_valid_intelligence_response(),
-        get_valid_planner_response()
-    ]
+    # Planner only needs one generate call if Intelligence is mocked
+    provider.generate.return_value = get_valid_planner_response()
     return provider
 
 
+@patch("app.application.workflow.ContentIntelligenceAnalyzer")
 def test_run_analysis_workflow_success(
-    mock_wp_client: MagicMock, mock_ai_provider: MagicMock, tmp_path: Path
+    mock_analyzer_cls: MagicMock,
+    mock_wp_client: MagicMock, 
+    mock_ai_provider: MagicMock, 
+    tmp_path: Path,
+    dummy_intelligence: ArticleAnalysis
 ) -> None:
     """Test successful execution of the workflow."""
     post_id = 123
+    
+    mock_analyzer_instance = MagicMock()
+    mock_analyzer_instance.analyze.return_value = dummy_intelligence
+    mock_analyzer_cls.return_value = mock_analyzer_instance
 
     artifacts = run_analysis_workflow(
         post_id=post_id,
@@ -101,7 +121,7 @@ def test_run_analysis_workflow_success(
     )
 
     mock_wp_client.get_post.assert_called_once_with(post_id)
-    assert mock_ai_provider.generate.call_count == 2
+    assert mock_ai_provider.generate.call_count == 1
 
     assert "html" in artifacts
     assert "article" in artifacts
@@ -115,7 +135,7 @@ def test_run_analysis_workflow_success(
     assert article_data["paragraphs"] == ["Test paragraph content."]
 
     intel_data = json.loads(artifacts["intelligence"].read_text(encoding="utf-8"))
-    assert intel_data["article_type"] == "Annual Event"
+    assert intel_data["strategy"] == "Selective"
 
     plan_data = json.loads(artifacts["plan"].read_text(encoding="utf-8"))
     assert "actions" in plan_data
@@ -158,7 +178,7 @@ def test_run_analysis_workflow_invalid_json_exhausts_retries(
     """Test workflow raises AIError when intelligence retries fail."""
     mock_ai_provider.generate.side_effect = ["This is definitely not json"] * 4
 
-    with pytest.raises(AIError, match="Failed to generate valid Content Intelligence"):
+    with pytest.raises(AIError, match="Failed to generate valid output in ArticleClassifier"):
         run_analysis_workflow(
             post_id=123,
             wp_client=mock_wp_client,

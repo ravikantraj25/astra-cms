@@ -1,14 +1,26 @@
 """Tests for the Content Intelligence Analyzer."""
 
-import json
+import pytest
 from unittest.mock import MagicMock
 
-import pytest
-
-from app.domain.ai import AIProvider, AIError
+from app.domain.ai import AIProvider
 from app.domain.article import Article
-from app.domain.intelligence import ArticleType, ContentFreshness, ArticleAnalysis, UpdatePolicy
+from app.domain.intelligence import (
+    ArticleType, 
+    ContentFreshness, 
+    ArticleAnalysis, 
+    UpdateStrategy,
+    PolicyAction,
+    EditingPolicy
+)
 from app.application.content_intelligence import ContentIntelligenceAnalyzer
+from app.application.analyzers.classifier import ClassifierResult
+from app.application.analyzers.temporal import TemporalAnalysisResult
+from app.application.analyzers.historical import HistoricalAnalysisResult
+from app.application.analyzers.structural import StructuralAnalysisResult
+from app.application.analyzers.event import EventAnalysisResult
+from app.application.analyzers.risk import RiskAnalysisResult
+from app.application.analyzers.metadata import MetadataAnalysisResult
 
 
 @pytest.fixture
@@ -21,120 +33,94 @@ def dummy_article():
     return Article(raw_html="<h1>Dummy Title</h1><p>Event runs in 2024</p>")
 
 
-def test_analyze_success(mock_ai_provider, dummy_article):
-    """Test that a valid JSON response is correctly parsed into ArticleAnalysis."""
-    valid_json = {
-        "article_type": "Annual Event",
-        "freshness": "Recurring Event",
-        "decision": {
-            "strategy": "Selective",
-            "reason": "Because it's an annual event."
-        },
-        "temporal_entities": [
-            {
-                "entity": "2024",
-                "policy": "UPDATE",
-                "reason": "Needs to be updated to current year",
-                "confidence": 0.99,
-                "source_sentence": "Event runs in 2024"
-            }
-        ],
-        "historical_facts": [],
-        "event_info": [],
-        "structural_analysis": [],
-        "risks": []
-    }
-    
-    # Wrap in markdown just to ensure markdown stripping works
-    mock_ai_provider.generate.return_value = f"```json\n{json.dumps(valid_json)}\n```"
-    
+from app.domain.intelligence import DecisionEvidence
+
+def test_analyze_orchestrator(mock_ai_provider, dummy_article):
+    """Test that the orchestrator correctly aggregates the results from all specialized analyzers."""
     analyzer = ContentIntelligenceAnalyzer(ai_provider=mock_ai_provider)
+    
+    mock_evidence = DecisionEvidence(
+        detected_value="test",
+        confidence=1.0,
+        reason="reason",
+        evidence="evidence",
+        source_section="s",
+        source_heading="h",
+        source_sentence="ss"
+    )
+
+    # Mock each analyzer's analyze method
+    analyzer.classifier.analyze = MagicMock(return_value=ClassifierResult(
+        article_type=ArticleType.ANNUAL_EVENT,
+        freshness=ContentFreshness.RECURRING_EVENT,
+        strategy=UpdateStrategy.SELECTIVE,
+        article_type_evidence=mock_evidence,
+        freshness_evidence=mock_evidence,
+        strategy_evidence=mock_evidence,
+        required_updates=["Update year to 2026"],
+        forbidden_updates=[]
+    ))
+    
+    analyzer.temporal_analyzer.analyze = MagicMock(return_value=TemporalAnalysisResult(
+        year_policy=PolicyAction.UPDATE,
+        date_policy=PolicyAction.UPDATE,
+        schedule_policy=PolicyAction.KEEP,
+        entities=[],
+        required_updates=[],
+        forbidden_updates=[]
+    ))
+    
+    analyzer.historical_analyzer.analyze = MagicMock(return_value=HistoricalAnalysisResult(
+        history_policy=PolicyAction.KEEP,
+        facts=[],
+        required_updates=[],
+        forbidden_updates=["Do not change history"]
+    ))
+    
+    analyzer.structural_analyzer.analyze = MagicMock(return_value=StructuralAnalysisResult(
+        image_policy=PolicyAction.KEEP,
+        schema_policy=PolicyAction.KEEP,
+        faq_policy=PolicyAction.UPDATE,
+        link_policy=PolicyAction.KEEP,
+        elements=[],
+        required_updates=[],
+        forbidden_updates=[]
+    ))
+    
+    analyzer.event_analyzer.analyze = MagicMock(return_value=EventAnalysisResult(
+        location_policy=PolicyAction.KEEP,
+        events=[],
+        required_updates=[],
+        forbidden_updates=[]
+    ))
+    
+    analyzer.risk_analyzer.analyze = MagicMock(return_value=RiskAnalysisResult(
+        risks=[],
+        required_updates=[],
+        forbidden_updates=[]
+    ))
+    
+    analyzer.metadata_analyzer.analyze = MagicMock(return_value=MetadataAnalysisResult(
+        title_policy=PolicyAction.UPDATE,
+        seo_policy=PolicyAction.UPDATE,
+        pricing_policy=PolicyAction.KEEP,
+        metadata_policy=PolicyAction.UPDATE,
+        evidence=mock_evidence,
+        required_updates=["Update SEO"],
+        forbidden_updates=[]
+    ))
+    
     result = analyzer.analyze(dummy_article)
     
     assert isinstance(result, ArticleAnalysis)
-    assert result.article_type == ArticleType.ANNUAL_EVENT
+    assert result.strategy == UpdateStrategy.SELECTIVE
     assert result.freshness == ContentFreshness.RECURRING_EVENT
-    assert result.decision.strategy == "Selective"
     
-    assert len(result.temporal_entities) == 1
-    assert result.temporal_entities[0].entity == "2024"
-    assert result.temporal_entities[0].policy == UpdatePolicy.UPDATE
-    assert result.temporal_entities[0].confidence == 0.99
+    assert result.editing_policy.article_type == ArticleType.ANNUAL_EVENT
+    assert result.editing_policy.year_policy == PolicyAction.UPDATE
+    assert result.editing_policy.history_policy == PolicyAction.KEEP
+    assert result.editing_policy.title_policy == PolicyAction.UPDATE
     
-    # Ensure AIProvider was called exactly once
-    mock_ai_provider.generate.assert_called_once()
-    
-
-def test_analyze_retries_on_invalid_json(mock_ai_provider, dummy_article):
-    """Test that the analyzer retries when the AI returns malformed JSON."""
-    valid_json = {
-        "article_type": "News",
-        "freshness": "Breaking News",
-        "decision": {
-            "strategy": "Aggressive",
-            "reason": "Because it's breaking news."
-        },
-        "temporal_entities": [],
-        "historical_facts": [],
-        "event_info": [],
-        "structural_analysis": [],
-        "risks": []
-    }
-    
-    mock_ai_provider.generate.side_effect = [
-        "This is not JSON at all.",
-        '{"missing_closing_brace": true',
-        json.dumps(valid_json)
-    ]
-    
-    analyzer = ContentIntelligenceAnalyzer(ai_provider=mock_ai_provider)
-    result = analyzer.analyze(dummy_article)
-    
-    assert result.article_type == ArticleType.NEWS
-    assert mock_ai_provider.generate.call_count == 3
-
-
-def test_analyze_retries_on_validation_error(mock_ai_provider, dummy_article):
-    """Test that the analyzer retries when the AI returns JSON that fails Pydantic validation."""
-    invalid_schema_json = {
-        # Missing required fields like category and update_rules
-        "confidence": 0.9,
-    }
-    
-    valid_json = {
-        "article_type": "Evergreen",
-        "freshness": "Evergreen",
-        "decision": {
-            "strategy": "Preserve",
-            "reason": "Because it's evergreen content."
-        },
-        "temporal_entities": [],
-        "historical_facts": [],
-        "event_info": [],
-        "structural_analysis": [],
-        "risks": []
-    }
-    
-    mock_ai_provider.generate.side_effect = [
-        json.dumps(invalid_schema_json),
-        json.dumps(valid_json)
-    ]
-    
-    analyzer = ContentIntelligenceAnalyzer(ai_provider=mock_ai_provider)
-    result = analyzer.analyze(dummy_article)
-    
-    assert result.article_type == ArticleType.EVERGREEN
-    assert mock_ai_provider.generate.call_count == 2
-
-
-def test_analyze_exhausts_retries(mock_ai_provider, dummy_article):
-    """Test that the analyzer raises an AIError after exhausting retries."""
-    mock_ai_provider.generate.return_value = "Not JSON"
-    
-    analyzer = ContentIntelligenceAnalyzer(ai_provider=mock_ai_provider)
-    
-    with pytest.raises(AIError, match="Failed to generate valid Content Intelligence"):
-        analyzer.analyze(dummy_article)
-        
-    # Initial attempt + 3 retries = 4 calls total
-    assert mock_ai_provider.generate.call_count == 4
+    assert "Update year to 2026" in result.required_updates
+    assert "Update SEO" in result.required_updates
+    assert "Do not change history" in result.forbidden_updates

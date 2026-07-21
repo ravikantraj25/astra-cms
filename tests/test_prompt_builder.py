@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 from app.domain.article import Article, Section
-from app.domain.intelligence import ArticleAnalysis, ArticleType, ContentFreshness, UpdateDecision, TemporalEntity, UpdatePolicy
+from app.domain.intelligence import ArticleAnalysis, ArticleType, ContentFreshness
 from app.domain.plan import SectionDecision, ActionType
 from app.application.prompt_builder import (
     build_planner_prompt,
@@ -40,6 +40,8 @@ def test_detect_article_type():
     assert _detect_article_type(article_news) == "News / Press Release"
 
 
+from app.domain.intelligence import ArticleAnalysis, ArticleType, ContentFreshness, UpdateStrategy, EditingPolicy, PolicyAction
+
 def test_build_planner_prompt_includes_intelligence():
     article = Article(
         title="My Event",
@@ -48,21 +50,27 @@ def test_build_planner_prompt_includes_intelligence():
     )
     
     intelligence = ArticleAnalysis(
-        article_type=ArticleType.ANNUAL_EVENT,
+        strategy=UpdateStrategy.SELECTIVE,
         freshness=ContentFreshness.RECURRING_EVENT,
-        decision=UpdateDecision(
-            strategy="Selective",
-            reason="It is an annual event."
+        editing_policy=EditingPolicy(
+            article_type=ArticleType.ANNUAL_EVENT,
+            year_policy=PolicyAction.UPDATE,
+            date_policy=PolicyAction.UPDATE,
+            history_policy=PolicyAction.KEEP,
+            title_policy=PolicyAction.UPDATE,
+            image_policy=PolicyAction.KEEP,
+            schema_policy=PolicyAction.KEEP,
+            faq_policy=PolicyAction.UPDATE,
+            schedule_policy=PolicyAction.UPDATE,
+            pricing_policy=PolicyAction.UPDATE,
+            metadata_policy=PolicyAction.UPDATE,
+            link_policy=PolicyAction.KEEP,
+            location_policy=PolicyAction.KEEP,
+            seo_policy=PolicyAction.UPDATE
         ),
-        temporal_entities=[
-            TemporalEntity(
-                entity="2024",
-                policy=UpdatePolicy.UPDATE,
-                reason="Needs new year",
-                confidence=0.99,
-                source_sentence="Event in 2024"
-            )
-        ],
+        required_updates=["Needs new year 2024"],
+        forbidden_updates=[],
+        temporal_entities=[],
         historical_facts=[],
         event_info=[],
         structural_analysis=[],
